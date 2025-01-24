@@ -14,7 +14,7 @@ language = "nodejs"
 [deployment]
 deploymentTarget = "gce"
 ignorePorts = false
-run = ["sh", "-c", "npm run build"]
+run = ["node", "index.js"]
 
 [[ports]]
 localPort = 3000
