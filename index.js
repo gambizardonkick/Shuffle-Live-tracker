@@ -69,9 +69,7 @@ fetchLeaderboardData(); // Initial fetch
 setInterval(fetchLeaderboardData, 5 * 60 * 1000); // Update every 5 minutes
 
 // Start the Express server
-app.listen(PORT, () => {
-    console.log(
-        `Server running at https://legitimateNavyReality.herokuapp.com`,
-    );
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
 });
 const keep_alive = require('./keep_alive.js')
