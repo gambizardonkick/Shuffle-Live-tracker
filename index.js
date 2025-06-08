@@ -1,5 +1,6 @@
+(async () => {
 const express = require("express");
-const fetch = require("node-fetch");
+const { default: fetch } = await import("node-fetch");
 
 
 const app = express();
@@ -162,3 +163,5 @@ app.get("/raffle/history", (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Raffle server running on port ${PORT}`);
 });
+
+})();
