@@ -1,4 +1,6 @@
-var http = require('http');
+
+import http from 'http';
+
 http.createServer(function (req, res) {
   res.write("I'm alive");
   res.end();
