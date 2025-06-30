@@ -1,6 +1,5 @@
-
-import express from "express";
-import axios from "axios";
+const express = require("express");
+const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -195,21 +194,18 @@ app.get("/winners", (req, res) => {
   const month = jstNow.getUTCMonth();
   const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
 
-  const weekWindows = [
-    { week: 1, start: new Date(Date.UTC(year, month, 7, 15, 1)) },
-    { week: 2, start: new Date(Date.UTC(year, month, 14, 15, 1)) },
-    { week: 3, start: new Date(Date.UTC(year, month, 21, 15, 1)) },
-    { week: 4, start: new Date(Date.UTC(year, month, 28, 15, 1)) }
-  ];
-
   // 🔁 Keep showing June winners until July 6, 2025 at 15:00 UTC
   const nowUTC = new Date();
-  const cutoffUTC = new Date(Date.UTC(2025, 6, 6, 15, 0)); // 2025-07-06 15:00 UTC
+  const cutoffUTC = new Date(Date.UTC(2025, 6, 6, 15, 0)); // July 6, 2025 15:00 UTC
   let effectiveMonthKey = monthKey;
+  let effectiveYear = year;
+  let effectiveMonth = month;
 
   if (monthKey === "2025-07" && nowUTC < cutoffUTC) {
     console.log("⏳ Still showing June winners (until July 6, 15:00 UTC)");
     effectiveMonthKey = "2025-06";
+    effectiveYear = 2025;
+    effectiveMonth = 5; // June is month 5 (0-indexed)
   }
 
   if (!monthlyWinners[effectiveMonthKey]) {
@@ -218,12 +214,18 @@ app.get("/winners", (req, res) => {
     weeklyTicketSnapshots[effectiveMonthKey] = {};
   }
 
+  const weekWindows = [
+    { week: 1, start: new Date(Date.UTC(effectiveYear, effectiveMonth, 7, 15, 1)) },
+    { week: 2, start: new Date(Date.UTC(effectiveYear, effectiveMonth, 14, 15, 1)) },
+    { week: 3, start: new Date(Date.UTC(effectiveYear, effectiveMonth, 21, 15, 1)) },
+    { week: 4, start: new Date(Date.UTC(effectiveYear, effectiveMonth, 28, 15, 1)) }
+  ];
+
   const results = [];
 
   for (const { week, start } of weekWindows) {
     const weekKey = `week${week}`;
 
-    // Pick winners only if time passed and not already picked
     if (jstNow >= start && !monthlyWinners[effectiveMonthKey][weekKey]) {
       weeklyTicketSnapshots[effectiveMonthKey][weekKey] = [...raffleTickets];
       console.log(`📸 Snapshot saved for ${effectiveMonthKey} ${weekKey} with ${raffleTickets.length} tickets`);
@@ -261,7 +263,6 @@ app.get("/winners", (req, res) => {
       }
     }
 
-    // Push result if available
     if (monthlyWinners[effectiveMonthKey][weekKey]) {
       results.push({
         week,
@@ -272,8 +273,6 @@ app.get("/winners", (req, res) => {
 
   res.json(results);
 });
-
-
 
 app.get("/wager", (req, res) => {
   const output = latestRawData.map(user => ({
