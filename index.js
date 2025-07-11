@@ -76,7 +76,10 @@ async function fetchClashData() {
 
       console.log(`[🔍] Fetching Clash data for ${dateStr}`);
       const res = await fetch(url, {
-        headers: { Authorization: CLASH_AUTH },
+        headers: { 
+          Authorization: CLASH_AUTH,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        },
       });
 
       if (!res.ok) {
@@ -89,6 +92,9 @@ async function fetchClashData() {
       const list = json.referralSummaries || [];
 
       console.log(`[📅] ${dateStr} returned ${list.length} users`);
+
+      // Add small delay between requests
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       for (const entry of list) {
         const name = entry.name?.trim();
