@@ -61,16 +61,10 @@ async function fetchRainbetData() {
   }
 }
 
-// ⚔ Clash Daily Accumulated with Puppeteer
+// ⚔ Clash Daily Accumulated
 async function fetchClashData() {
   try {
-    const puppeteer = await import('puppeteer');
     const userMap = {};
-
-    const browser = await puppeteer.default.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
 
     for (
       let d = new Date(CLASH_START_DATE);
@@ -80,44 +74,27 @@ async function fetchClashData() {
       const dateStr = d.toISOString().slice(0, 10);
       const url = `https://api.clash.gg/affiliates/detailed-summary/v2/${dateStr}`;
 
-      console.log(`[🔍] Fetching Clash data for ${dateStr} with Puppeteer`);
+      console.log(`[🔍] Fetching Clash data for ${dateStr}`);
       
-      const page = await browser.newPage();
-      
-      // Set authorization header
-      await page.setExtraHTTPHeaders({
-        'Authorization': CLASH_AUTH
-      });
-
       try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        
-        // Wait for content to load and check if we got JSON
-        const content = await page.content();
-        
-        if (content.includes('challenge-platform')) {
-          console.warn(`[⚠️] Cloudflare challenge detected for ${dateStr}`);
-          await page.close();
-          continue;
-        }
-
-        // Try to get JSON from the page
-        const jsonText = await page.evaluate(() => {
-          const pre = document.querySelector('pre');
-          if (pre) return pre.textContent;
-          return document.body.textContent;
+        const res = await fetch(url, {
+          headers: { 
+            'Authorization': CLASH_AUTH,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
         });
 
-        let json;
-        try {
-          json = JSON.parse(jsonText);
-        } catch (parseErr) {
-          console.warn(`[⚠️] Failed to parse JSON for ${dateStr}`);
-          await page.close();
+        if (!res.ok) {
+          console.warn(`[⚠️] Skipped ${dateStr}: ${res.status} ${res.statusText}`);
           continue;
         }
 
-        const list = json.referralSummaries || [];
+        const json = await res.json();
+        
+        // Handle the actual API structure with referralSummaries array
+        const list = json.referralSummaries || json || [];
         console.log(`[📅] ${dateStr} returned ${list.length} users`);
 
         for (const entry of list) {
@@ -132,26 +109,20 @@ async function fetchClashData() {
           console.log(`   ↪️  ${name}: +${entry.wagered || 0} (total ${userMap[name]})`);
         }
 
-      } catch (pageErr) {
-        console.warn(`[⚠️] Page error for ${dateStr}: ${pageErr.message}`);
+      } catch (fetchErr) {
+        console.warn(`[⚠️] Fetch error for ${dateStr}: ${fetchErr.message}`);
       }
 
-      await page.close();
       // Add delay between requests
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    await browser.close();
-
     const merged = Object.entries(userMap)
-      .map(([name, totalCents]) => {
-        const wager = Math.floor(totalCents / 100);
-        return {
-          username: maskUsername(name),
-          wagered: wager,
-          weightedWager: wager,
-        };
-      })
+      .map(([name, totalWagered]) => ({
+        username: maskUsername(name),
+        wagered: Math.round(totalWagered),
+        weightedWager: Math.round(totalWagered),
+      }))
       .filter(user => user.wagered > 0)
       .sort((a, b) => b.wagered - a.wagered)
       .slice(0, 10);
