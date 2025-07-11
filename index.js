@@ -61,10 +61,16 @@ async function fetchRainbetData() {
   }
 }
 
-// ⚔ Clash Daily Accumulated
+// ⚔ Clash Daily Accumulated with Puppeteer
 async function fetchClashData() {
   try {
+    const puppeteer = await import('puppeteer');
     const userMap = {};
+
+    const browser = await puppeteer.default.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
 
     for (
       let d = new Date(CLASH_START_DATE);
@@ -74,40 +80,68 @@ async function fetchClashData() {
       const dateStr = d.toISOString().slice(0, 10);
       const url = `https://api.clash.gg/affiliates/detailed-summary/v2/${dateStr}`;
 
-      console.log(`[🔍] Fetching Clash data for ${dateStr}`);
-      const res = await fetch(url, {
-        headers: { 
-          Authorization: CLASH_AUTH,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        },
+      console.log(`[🔍] Fetching Clash data for ${dateStr} with Puppeteer`);
+      
+      const page = await browser.newPage();
+      
+      // Set authorization header
+      await page.setExtraHTTPHeaders({
+        'Authorization': CLASH_AUTH
       });
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.warn(`[⚠️] Skipped ${dateStr}: ${res.status} - ${errorText}`);
-        continue;
-      }
-
-      const json = await res.json();
-      const list = json.referralSummaries || [];
-
-      console.log(`[📅] ${dateStr} returned ${list.length} users`);
-
-      // Add small delay between requests
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      for (const entry of list) {
-        const name = entry.name?.trim();
-        if (!name) continue;
-
-        if (!userMap[name]) {
-          userMap[name] = 0;
+      try {
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        // Wait for content to load and check if we got JSON
+        const content = await page.content();
+        
+        if (content.includes('challenge-platform')) {
+          console.warn(`[⚠️] Cloudflare challenge detected for ${dateStr}`);
+          await page.close();
+          continue;
         }
 
-        userMap[name] += entry.wagered || 0;
-        console.log(`   ↪️  ${name}: +${entry.wagered || 0} (total ${userMap[name]})`);
+        // Try to get JSON from the page
+        const jsonText = await page.evaluate(() => {
+          const pre = document.querySelector('pre');
+          if (pre) return pre.textContent;
+          return document.body.textContent;
+        });
+
+        let json;
+        try {
+          json = JSON.parse(jsonText);
+        } catch (parseErr) {
+          console.warn(`[⚠️] Failed to parse JSON for ${dateStr}`);
+          await page.close();
+          continue;
+        }
+
+        const list = json.referralSummaries || [];
+        console.log(`[📅] ${dateStr} returned ${list.length} users`);
+
+        for (const entry of list) {
+          const name = entry.name?.trim();
+          if (!name) continue;
+
+          if (!userMap[name]) {
+            userMap[name] = 0;
+          }
+
+          userMap[name] += entry.wagered || 0;
+          console.log(`   ↪️  ${name}: +${entry.wagered || 0} (total ${userMap[name]})`);
+        }
+
+      } catch (pageErr) {
+        console.warn(`[⚠️] Page error for ${dateStr}: ${pageErr.message}`);
       }
+
+      await page.close();
+      // Add delay between requests
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
+
+    await browser.close();
 
     const merged = Object.entries(userMap)
       .map(([name, totalCents]) => {
