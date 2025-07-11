@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3000;
 
 // ✅ Keys
 const API_KEY = "RFbd9u0KPbkp0MTcZ5Elm7kyO1CVvnH9";
-const CLASH_AUTH = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."; // <-- Use full token
+const CLASH_AUTH = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicGFzcyIsInNjb3BlIjoiYWZmaWxpYXRlcyIsInVzZXJJZCI6NTk5OTg5OCwiaWF0IjoxNzUyMTQxMTU1LCJleHAiOjE5MDk5MjkxNTV9.OOp2OWP3Rb9iTiuZt1O0CFXIgfeTywu9A2gwyM73fHc";
 const SELF_URL = "https://ecoraindata.onrender.com/leaderboard/top14";
 
 // 📅 Date range
@@ -61,76 +61,57 @@ async function fetchRainbetData() {
   }
 }
 
-// ⚔ Clash Daily Accumulated
+// ⚔ Clash Leaderboard Data
 async function fetchClashData() {
   try {
-    const userMap = {};
+    console.log("[🔍] Fetching Clash leaderboard data");
+    
+    const url = "https://clash.gg/api/affiliates/leaderboards/my-leaderboards-api";
+    
+    const res = await fetch(url, {
+      headers: { 
+        'Authorization': CLASH_AUTH,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
+      },
+    });
 
-    for (
-      let d = new Date(CLASH_START_DATE);
-      d <= CLASH_END_DATE;
-      d.setDate(d.getDate() + 1)
-    ) {
-      const dateStr = d.toISOString().slice(0, 10);
-      const url = `https://api.clash.gg/affiliates/detailed-summary/v2/${dateStr}`;
-
-      console.log(`[🔍] Fetching Clash data for ${dateStr}`);
-      
-      try {
-        const res = await fetch(url, {
-          headers: { 
-            'Authorization': CLASH_AUTH,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-        });
-
-        if (!res.ok) {
-          console.warn(`[⚠️] Skipped ${dateStr}: ${res.status} ${res.statusText}`);
-          continue;
-        }
-
-        const json = await res.json();
-        
-        // Handle the actual API structure with referralSummaries array
-        const list = json.referralSummaries || json || [];
-        console.log(`[📅] ${dateStr} returned ${list.length} users`);
-
-        for (const entry of list) {
-          const name = entry.name?.trim();
-          if (!name) continue;
-
-          if (!userMap[name]) {
-            userMap[name] = 0;
-          }
-
-          userMap[name] += entry.wagered || 0;
-          console.log(`   ↪️  ${name}: +${entry.wagered || 0} (total ${userMap[name]})`);
-        }
-
-      } catch (fetchErr) {
-        console.warn(`[⚠️] Fetch error for ${dateStr}: ${fetchErr.message}`);
-      }
-
-      // Add delay between requests
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!res.ok) {
+      console.warn(`[⚠️] Clash API error: ${res.status} ${res.statusText}`);
+      return;
     }
 
-    const merged = Object.entries(userMap)
-      .map(([name, totalWagered]) => ({
-        username: maskUsername(name),
-        wagered: Math.round(totalWagered),
-        weightedWager: Math.round(totalWagered),
+    const json = await res.json();
+    console.log("[📊] Raw Clash API response:", JSON.stringify(json, null, 2));
+    
+    // Process the leaderboard data
+    let leaderboardData = [];
+    
+    // Handle different possible response structures
+    if (Array.isArray(json)) {
+      leaderboardData = json;
+    } else if (json.data && Array.isArray(json.data)) {
+      leaderboardData = json.data;
+    } else if (json.leaderboard && Array.isArray(json.leaderboard)) {
+      leaderboardData = json.leaderboard;
+    } else if (json.users && Array.isArray(json.users)) {
+      leaderboardData = json.users;
+    }
+
+    const processed = leaderboardData
+      .map(entry => ({
+        username: maskUsername(entry.name || entry.username || "Unknown"),
+        wagered: Math.round((entry.wagered || 0) / 100), // Convert from gem cents to gems
+        weightedWager: Math.round((entry.wagered || 0) / 100),
       }))
       .filter(user => user.wagered > 0)
       .sort((a, b) => b.wagered - a.wagered)
       .slice(0, 10);
 
-    if (merged.length >= 2) [merged[0], merged[1]] = [merged[1], merged[0]];
-    clashData = merged;
+    if (processed.length >= 2) [processed[0], processed[1]] = [processed[1], processed[0]];
+    clashData = processed;
 
-    console.log("[✅] Clash leaderboard built:");
+    console.log("[✅] Clash leaderboard updated:");
     console.log(JSON.stringify(clashData, null, 2));
   } catch (err) {
     console.error("[❌] Clash error:", err.message);
