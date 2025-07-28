@@ -1,137 +1,122 @@
-import express from "express";
-import fetch from "node-fetch";
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
-// ✅ Keys
-const API_KEY = "RFbd9u0KPbkp0MTcZ5Elm7kyO1CVvnH9";
-const CLASH_AUTH = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicGFzcyIsInNjb3BlIjoiYWZmaWxpYXRlcyIsInVzZXJJZCI6NTk5OTg5OCwiaWF0IjoxNzUyMTQxMTU1LCJleHAiOjE5MDk5MjkxNTV9.OOp2OWP3Rb9iTiuZt1O0CFXIgfeTywu9A2gwyM73fHc";
-const SELF_URL = "https://ecoraindata.onrender.com/leaderboard/top14";
+app.use(cors());
 
-// 📅 Date range
-const RAIN_START = "2025-07-11";
-const RAIN_END = "2025-07-24";
-const CLASH_START_DATE = new Date("2025-07-11");
-const CLASH_END_DATE = new Date("2025-07-24");
+const apiUrl = "https://roobetconnect.com/affiliate/v2/stats";
+const apiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjI2YWU0ODdiLTU3MDYtNGE3ZS04YTY5LTMzYThhOWM5NjMxYiIsIm5vbmNlIjoiZWI2MzYyMWUtMTMwZi00ZTE0LTlmOWMtOTY3MGNiZGFmN2RiIiwic2VydmljZSI6ImFmZmlsaWF0ZVN0YXRzIiwiaWF0IjoxNzI3MjQ2NjY1fQ.rVG_QKMcycBEnzIFiAQuixfu6K_oEkAq2Y8Gukco3b8";
 
-// 📦 Cache
-let rainData = [];
-let clashData = [];
+let leaderboardCache = [];
 
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  next();
+const formatUsername = (username) => {
+    const firstTwo = username.slice(0, 2);
+    const lastTwo = username.slice(-2);
+    return `${firstTwo}***${lastTwo}`;
+};
+
+// Get current JST weekly window (1-7, 8-14, 15-21, 22-28)
+function getJST7DayPeriodWindow() {
+    const nowJST = new Date(Date.now() + 9 * 60 * 60 * 1000); // UTC+9
+
+    const year = nowJST.getUTCFullYear();
+    const month = nowJST.getUTCMonth();
+    const date = nowJST.getUTCDate();
+
+    let startDay, endDay;
+
+    if (date >= 1 && date <= 7) {
+        startDay = 1;
+        endDay = 7;
+    } else if (date >= 8 && date <= 14) {
+        startDay = 8;
+        endDay = 14;
+    } else if (date >= 15 && date <= 21) {
+        startDay = 15;
+        endDay = 21;
+    } else if (date >= 22 && date <= 28) {
+        startDay = 22;
+        endDay = 28;
+    } else {
+        return null; // outside valid period
+    }
+
+    const start = new Date(Date.UTC(year, month, startDay - 1, 15, 0, 1)); // JST 00:00:01
+    const end = new Date(Date.UTC(year, month, endDay, 14, 59, 59));       // JST 23:59:59
+
+    return {
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+    };
+}
+
+async function fetchLeaderboardData() {
+    try {
+        const period = getJST7DayPeriodWindow();
+        if (!period) {
+            console.log("No leaderboard active (JST 29–31).");
+            leaderboardCache = [];
+            return;
+        }
+
+        const { startDate, endDate } = period;
+
+        const response = await axios.get(apiUrl, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            params: {
+                userId: "26ae487b-5706-4a7e-8a69-33a8a9c9631b",
+                startDate,
+                endDate,
+            },
+        });
+
+        const data = response.data;
+
+        leaderboardCache = data
+            .filter((player) => player.username !== "azisai205")
+            .sort((a, b) => b.weightedWagered - a.weightedWagered)
+            .map((player) => ({
+                username: formatUsername(player.username),
+                wagered: Math.round(player.weightedWagered),
+                weightedWager: Math.round(player.weightedWagered),
+            }));
+
+        console.log(`✅ Updated leaderboard cache for ${startDate} to ${endDate}`);
+    } catch (error) {
+        console.error("❌ Error fetching leaderboard:", error.message);
+    }
+}
+
+// Routes
+app.get("/", (req, res) => {
+    res.send("Welcome. Access /1000 or /5000 for this week's filtered data.");
 });
 
-function maskUsername(username) {
-  if (!username) return "Anonymous";
-  if (username.length <= 4) return username;
-  return username.slice(0, 2) + "***" + username.slice(-2);
-}
+app.get("/1000", (req, res) => {
+    const filtered = leaderboardCache.filter((p) => p.weightedWager >= 1000);
+    res.json(filtered);
+});
 
-function getRainApiUrl() {
-  return `https://services.rainbet.com/v1/external/affiliates?start_at=${RAIN_START}&end_at=${RAIN_END}&key=${API_KEY}`;
-}
+app.get("/5000", (req, res) => {
+    const filtered = leaderboardCache.filter((p) => p.weightedWager >= 5000);
+    res.json(filtered);
+});
 
-// 🌧 Rainbet
-async function fetchRainbetData() {
-  try {
-    const res = await fetch(getRainApiUrl());
-    const json = await res.json();
+// Refresh cache every 5 mins
+fetchLeaderboardData();
+setInterval(fetchLeaderboardData, 5 * 60 * 1000);
 
-    const top = (json.affiliates || [])
-      .filter(a => a.username.toLowerCase() !== "vampirenoob")
-      .map(a => ({
-        username: maskUsername(a.username),
-        wagered: Math.round(parseFloat(a.wagered_amount)),
-        weightedWager: Math.round(parseFloat(a.wagered_amount)),
-      }))
-      .sort((a, b) => b.wagered - a.wagered)
-      .slice(0, 10);
-
-    if (top.length >= 2) [top[0], top[1]] = [top[1], top[0]];
-    rainData = top;
-
-    console.log("[✅] Rainbet data updated");
-  } catch (err) {
-    console.error("[❌] Rainbet error:", err.message);
-  }
-}
-
-// ⚔ Clash Leaderboard Data
-async function fetchClashData() {
-  try {
-    console.log("[🔍] Fetching Clash leaderboard data");
-    
-    const url = "https://clash.gg/api/affiliates/leaderboards/my-leaderboards-api";
-    
-    const res = await fetch(url, {
-      headers: { 
-        'Authorization': CLASH_AUTH,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json'
-      },
-    });
-
-    if (!res.ok) {
-      console.warn(`[⚠️] Clash API error: ${res.status} ${res.statusText}`);
-      return;
-    }
-
-    const json = await res.json();
-    console.log("[📊] Raw Clash API response:", JSON.stringify(json, null, 2));
-    
-    // Process the leaderboard data
-    let leaderboardData = [];
-    
-    // Handle different possible response structures
-    if (Array.isArray(json)) {
-      leaderboardData = json;
-    } else if (json.data && Array.isArray(json.data)) {
-      leaderboardData = json.data;
-    } else if (json.leaderboard && Array.isArray(json.leaderboard)) {
-      leaderboardData = json.leaderboard;
-    } else if (json.users && Array.isArray(json.users)) {
-      leaderboardData = json.users;
-    }
-
-    const processed = leaderboardData
-      .map(entry => ({
-        username: maskUsername(entry.name || entry.username || "Unknown"),
-        wagered: Math.round((entry.wagered || 0) / 100), // Convert from gem cents to gems
-        weightedWager: Math.round((entry.wagered || 0) / 100),
-      }))
-      .filter(user => user.wagered > 0)
-      .sort((a, b) => b.wagered - a.wagered)
-      .slice(0, 10);
-
-    if (processed.length >= 2) [processed[0], processed[1]] = [processed[1], processed[0]];
-    clashData = processed;
-
-    console.log("[✅] Clash leaderboard updated:");
-    console.log(JSON.stringify(clashData, null, 2));
-  } catch (err) {
-    console.error("[❌] Clash error:", err.message);
-  }
-}
-
-// ⏱ Initial run
-fetchRainbetData();
-fetchClashData();
-
-// 🌐 Routes
-app.get("/leaderboard/rain", (req, res) => res.json(rainData));
-app.get("/leaderboard/clash", (req, res) => res.json(clashData));
-
-// 🫀 Keep alive
+// Keep Render alive
 setInterval(() => {
-  fetch(SELF_URL)
-    .then(() => console.log("[🔁] Self-pinged"))
-    .catch((err) => console.error("[⚠️] Ping failed:", err.message));
-}, 270000);
+    axios.get("https://azisaiweekly-upnb.onrender.com/5000")
+        .then(() => console.log("🔁 Self-ping success"))
+        .catch((err) => console.error("Self-ping failed:", err.message));
+}, 4 * 60 * 1000);
 
-// 🚀 Start server
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+// Start server
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server live at port ${PORT}`);
+});
