@@ -1,6 +1,6 @@
-import express from "express";
-import axios from "axios";
-import cors from "cors";
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -17,40 +17,39 @@ let leaderboardTop14Cache = [];
 const formatUsername = (username) => {
   const firstTwo = username.slice(0, 2);
   const lastTwo = username.slice(-2);
-  return `${firstTwo}***${lastTwo}`;
+  return ${firstTwo}***${lastTwo};
 };
 
-// Utility to get last day of a month
 function getLastDayOfMonth(year, month) {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
-// JST-aware monthly raffle logic with dynamic last-day fix
-function getMonthlyDateRange() {
+function getSmartDateRange() {
   const now = new Date();
   const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000); // UTC+9
-  const year = jstNow.getUTCFullYear();
-  const month = jstNow.getUTCMonth();
 
-  let startDate, endDate;
+  const jstYear = jstNow.getUTCFullYear();
+  const jstMonth = jstNow.getUTCMonth(); // 0 = Jan, 5 = June, 6 = July
 
-  const inTwoMonthPeriod = (
-    jstNow >= new Date(Date.UTC(2025, 5, 0, 15, 1, 0)) && // May 31 15:01 UTC = June 1 JST
-    jstNow < new Date(Date.UTC(2025, 7, 0, 15, 0, 0))     // July 31 15:00 UTC = Aug 1 JST
-  );
-
-  if (inTwoMonthPeriod) {
-    startDate = new Date(Date.UTC(2025, 4, 30, 15, 1, 0)); // May 30 15:01 UTC
-    endDate = new Date(Date.UTC(2025, 6, 31, 15, 0, 0));   // July 31 15:00 UTC
-  } else {
-    const prevMonth = month - 1 < 0 ? 11 : month - 1;
-    const prevYear = month - 1 < 0 ? year - 1 : year;
-    const endOfPrevMonth = getLastDayOfMonth(prevYear, prevMonth);
-    const endOfThisMonth = getLastDayOfMonth(year, month);
-
-    startDate = new Date(Date.UTC(prevYear, prevMonth, endOfPrevMonth, 15, 1, 0));
-    endDate = new Date(Date.UTC(year, month, endOfThisMonth, 15, 0, 0));
+  // 🎯 Hardcoded for June + July 2025 (JST)
+  if (jstYear === 2025 && (jstMonth === 5 || jstMonth === 6)) {
+    return {
+      startDate: "2025-05-31T15:01:00.000Z", // ✅ June 1, 00:01 JST
+      endDate:   "2025-07-31T15:00:00.000Z"  // ✅ Aug 1, 00:00 JST
+    };
   }
+
+  // 🧠 Dynamic fallback for other months
+  const year = jstYear;
+  const month = jstMonth;
+
+  const getLastDay = (y, m) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+
+  const prevMonth = month - 1 < 0 ? 11 : month - 1;
+  const prevYear = month - 1 < 0 ? year - 1 : year;
+
+  const startDate = new Date(Date.UTC(prevYear, prevMonth, getLastDay(prevYear, prevMonth), 15, 1, 0));
+  const endDate = new Date(Date.UTC(year, month, getLastDay(year, month), 15, 0, 0));
 
   return {
     startDate: startDate.toISOString(),
@@ -60,11 +59,11 @@ function getMonthlyDateRange() {
 
 async function fetchLeaderboardData() {
   try {
-    const { startDate, endDate } = getMonthlyDateRange();
+    const { startDate, endDate } = getSmartDateRange();
 
     const response = await axios.get(apiUrl, {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: Bearer ${apiKey},
       },
       params: {
         userId,
@@ -85,11 +84,13 @@ async function fetchLeaderboardData() {
       weightedWager: Math.round(player.weightedWagered),
     }));
 
-    leaderboardTop14Cache = sorted
-      .map((player) => ({
-        username: formatUsername(player.username),
-        weightedWager: Math.round(player.weightedWagered),
-      }));
+leaderboardTop14Cache = sorted
+  .filter(player => player.weightedWagered >= 100000)
+  .map((player) => ({
+    username: formatUsername(player.username),
+    weightedWager: Math.round(player.weightedWagered),
+  }));
+
 
     if (leaderboardTop14Cache.length >= 2) {
       const temp = leaderboardTop14Cache[0];
@@ -97,7 +98,7 @@ async function fetchLeaderboardData() {
       leaderboardTop14Cache[1] = temp;
     }
 
-    console.log(`[${new Date().toISOString()}] ✅ Leaderboard updated: ${sorted.length} entries`);
+    console.log([${new Date().toISOString()}] ✅ Leaderboard updated: ${sorted.length} entries);
   } catch (error) {
     leaderboardCache = [];
     leaderboardTop14Cache = [];
@@ -107,7 +108,7 @@ async function fetchLeaderboardData() {
 
 // Routes
 app.get("/", (req, res) => {
-  res.send("🎰 Roobet Leaderboard API Live! Use /leaderboard or /leaderboard/top14");
+  res.send("🎰 Roobet Leaderboard API Live – Auto Range with June+July special case");
 });
 
 app.get("/leaderboard", (req, res) => {
@@ -119,19 +120,20 @@ app.get("/leaderboard/top14", (req, res) => {
 });
 
 app.get("/current-range", (req, res) => {
-  const { startDate, endDate } = getMonthlyDateRange();
+  const { startDate, endDate } = getSmartDateRange();
   res.json({ startDate, endDate });
 });
 
 // Server start
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(🚀 Server running on port ${PORT});
 });
 
-// Fetch & refresh loop
+// Start fetch
 fetchLeaderboardData();
 setInterval(fetchLeaderboardData, 5 * 60 * 1000);
 
+// Self-ping
 setInterval(() => {
   axios
     .get("https://azisailbdata.onrender.com/leaderboard/top14")
