@@ -17,7 +17,7 @@ let leaderboardTop14Cache = [];
 const formatUsername = (username) => {
   const firstTwo = username.slice(0, 2);
   const lastTwo = username.slice(-2);
-  return `${firstTwo}***${lastTwo}`;
+  return ${firstTwo}***${lastTwo};
 };
 
 function getLastDayOfMonth(year, month) {
@@ -63,7 +63,7 @@ async function fetchLeaderboardData() {
 
     const response = await axios.get(apiUrl, {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: Bearer ${apiKey},
       },
       params: {
         userId,
@@ -98,7 +98,7 @@ leaderboardTop14Cache = sorted
       leaderboardTop14Cache[1] = temp;
     }
 
-    console.log(`[${new Date().toISOString()}] ✅ Leaderboard updated: ${sorted.length} entries`);
+    console.log([${new Date().toISOString()}] ✅ Leaderboard updated: ${sorted.length} entries);
   } catch (error) {
     leaderboardCache = [];
     leaderboardTop14Cache = [];
@@ -126,7 +126,7 @@ app.get("/current-range", (req, res) => {
 
 // Server start
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(🚀 Server running on port ${PORT});
 });
 
 // Start fetch
