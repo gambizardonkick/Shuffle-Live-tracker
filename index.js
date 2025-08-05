@@ -1,6 +1,6 @@
-    import express from "express";
-import axios from "axios";
-import cors from "cors";
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -18,35 +18,57 @@ const formatUsername = (username) => {
     return `${firstTwo}***${lastTwo}`;
 };
 
-// Get current JST weekly leaderboard window: Tuesday 00:00:01 JST - next Monday 23:59:59 JST
-function getJSTWeeklyWindow() {
-    // Current UTC+9 (JST)
-    const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
+// Use an API to get the current time in JST
+async function getJSTWeeklyWindow() {
+    try {
+        const timeApiUrl = "http://worldtimeapi.org/api/timezone/Asia/Tokyo";
+        const response = await axios.get(timeApiUrl);
+        const nowJST = new Date(response.data.datetime);
 
-    // Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
-    let dayOfWeek = now.getUTCDay();
+        // Clone date and shift to start of week (Tuesday 00:00:01 JST)
+        const jstDay = nowJST.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
 
-    // Find Monday of this week in JST
-    const diffToMonday = (dayOfWeek + 6) % 7; // since 1=Monday in getUTCDay
-    // End: This week's Monday 23:59:59 JST
-    const end = new Date(now);
-    end.setUTCDate(now.getUTCDate() - diffToMonday + 1);
-    end.setUTCHours(14, 59, 59, 0); // 23:59:59 JST (UTC 14:59:59)
+        // Calculate how many days to subtract to get to this week's Tuesday
+        const daysSinceTuesday = (jstDay + 6) % 7; // Mon=1, so we go back to last Tue
+        const tuesdayStart = new Date(nowJST);
+        tuesdayStart.setDate(nowJST.getDate() - daysSinceTuesday);
+        tuesdayStart.setHours(0, 0, 1, 0); // 00:00:01 JST
 
-    // Start: Last week's Tuesday 00:00:01 JST
-    const start = new Date(end);
-    start.setUTCDate(end.getUTCDate() - 6); // last Tuesday
-    start.setUTCHours(15, 0, 1, 0); // 00:00:01 JST (UTC 15:00:01 previous day)
+        // Monday 23:59:59 of same week
+        const mondayEnd = new Date(tuesdayStart);
+        mondayEnd.setDate(tuesdayStart.getDate() + 6);
+        mondayEnd.setHours(23, 59, 59, 999); // 23:59:59.999 JST
 
-    return {
-        startDate: start.toISOString(),
-        endDate: end.toISOString(),
-    };
+        return {
+            startDate: tuesdayStart.toISOString(),
+            endDate: mondayEnd.toISOString(),
+        };
+    } catch (err) {
+        console.error("Error fetching JST time:", err.message);
+
+        // Fallback: Local server time + 9 hours to approximate JST
+        const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        const jstDay = now.getDay();
+        const daysSinceTuesday = (jstDay + 6) % 7;
+        const tuesdayStart = new Date(now);
+        tuesdayStart.setDate(now.getDate() - daysSinceTuesday);
+        tuesdayStart.setHours(0, 0, 1, 0);
+
+        const mondayEnd = new Date(tuesdayStart);
+        mondayEnd.setDate(tuesdayStart.getDate() + 6);
+        mondayEnd.setHours(23, 59, 59, 999);
+
+        return {
+            startDate: tuesdayStart.toISOString(),
+            endDate: mondayEnd.toISOString(),
+        };
+    }
 }
+
 
 async function fetchLeaderboardData() {
     try {
-        const period = getJSTWeeklyWindow();
+        const period = await getJSTWeeklyWindow();
         const { startDate, endDate } = period;
 
         const response = await axios.get(apiUrl, {
