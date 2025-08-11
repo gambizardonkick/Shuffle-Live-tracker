@@ -1,6 +1,6 @@
-import express from "express";
-import axios from "axios";
-import cors from "cors";
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -25,45 +25,64 @@ async function getJSTWeeklyWindow() {
         const response = await axios.get(timeApiUrl);
         const nowJST = new Date(response.data.datetime);
 
-        // Clone date and shift to start of week (Tuesday 00:00:01 JST)
-        const jstDay = nowJST.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+        // Day index: 0=Sun, 1=Mon, ..., 6=Sat
+        const jstDay = nowJST.getDay();
 
-        // Calculate how many days to subtract to get to this week's Tuesday
-        const daysSinceTuesday = (jstDay + 6) % 7; // Mon=1, so we go back to last Tue
-        const tuesdayStart = new Date(nowJST);
-        tuesdayStart.setDate(nowJST.getDate() - daysSinceTuesday);
-        tuesdayStart.setHours(0, 0, 1, 0); // 00:00:01 JST
+        // Find this week's Monday 23:59:59 JST
+        const mondayThisWeek = new Date(nowJST);
+        mondayThisWeek.setDate(nowJST.getDate() - ((jstDay + 6) % 7)); // go back to Monday
+        mondayThisWeek.setHours(23, 59, 59, 999);
 
-        // Monday 23:59:59 of same week
-        const mondayEnd = new Date(tuesdayStart);
-        mondayEnd.setDate(tuesdayStart.getDate() + 6);
-        mondayEnd.setHours(23, 59, 59, 999); // 23:59:59.999 JST
+        // If now is after this Monday's cutoff, start from this Monday 23:59:59
+        // Else start from last Monday's cutoff
+        let start;
+        if (nowJST > mondayThisWeek) {
+            start = new Date(mondayThisWeek.getTime() + 1000); // Tuesday 00:00:00 JST
+        } else {
+            const lastMonday = new Date(mondayThisWeek);
+            lastMonday.setDate(lastMonday.getDate() - 7);
+            start = new Date(lastMonday.getTime() + 1000);
+        }
+
+        // End is next Monday 23:59:59 JST
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
 
         return {
-            startDate: tuesdayStart.toISOString(),
-            endDate: mondayEnd.toISOString(),
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
         };
     } catch (err) {
         console.error("Error fetching JST time:", err.message);
 
-        // Fallback: Local server time + 9 hours to approximate JST
+        // Fallback using server time + 9 hours
         const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
         const jstDay = now.getDay();
-        const daysSinceTuesday = (jstDay + 6) % 7;
-        const tuesdayStart = new Date(now);
-        tuesdayStart.setDate(now.getDate() - daysSinceTuesday);
-        tuesdayStart.setHours(0, 0, 1, 0);
+        const mondayThisWeek = new Date(now);
+        mondayThisWeek.setDate(now.getDate() - ((jstDay + 6) % 7));
+        mondayThisWeek.setHours(23, 59, 59, 999);
 
-        const mondayEnd = new Date(tuesdayStart);
-        mondayEnd.setDate(tuesdayStart.getDate() + 6);
-        mondayEnd.setHours(23, 59, 59, 999);
+        let start;
+        if (now > mondayThisWeek) {
+            start = new Date(mondayThisWeek.getTime() + 1000);
+        } else {
+            const lastMonday = new Date(mondayThisWeek);
+            lastMonday.setDate(lastMonday.getDate() - 7);
+            start = new Date(lastMonday.getTime() + 1000);
+        }
+
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
 
         return {
-            startDate: tuesdayStart.toISOString(),
-            endDate: mondayEnd.toISOString(),
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
         };
     }
 }
+
 
 
 async function fetchLeaderboardData() {
