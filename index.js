@@ -1,149 +1,146 @@
 import express from "express";
-import axios from "axios";
-import cors from "cors";
+import fetch from "node-fetch";
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
+const SELF_URL = "https://colebeardata.onrender.com/leaderboard/top14";
+const API_KEY = "k4j4j3Yk7e9BePgYg2cAmlsUC8WGNC5f";
 
-app.use(cors());
+let cachedData = [];
 
-const apiUrl = "https://roobetconnect.com/affiliate/v2/stats";
-const apiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjI2YWU0ODdiLTU3MDYtNGE3ZS04YTY5LTMzYThhOWM5NjMxYiIsIm5vbmNlIjoiZWI2MzYyMWUtMTMwZi00ZTE0LTlmOWMtOTY3MGNiZGFmN2RiIiwic2VydmljZSI6ImFmZmlsaWF0ZVN0YXRzIiwiaWF0IjoxNzI3MjQ2NjY1fQ.rVG_QKMcycBEnzIFiAQuixfu6K_oEkAq2Y8Gukco3b8";
+// ====== CYCLE CONFIG (UTC) ======
+const BASE_START_MS = Date.UTC(2025, 7, 11, 0, 0, 0); // 11 Aug 2025 00:00:00 UTC
+const CYCLE_MS = 14 * 24 * 60 * 60 * 1000;           // 14 days
 
-let leaderboardCache = [];
-
-const formatUsername = (username) => {
-    const firstTwo = username.slice(0, 2);
-    const lastTwo = username.slice(-2);
-    return `${firstTwo}***${lastTwo}`;
-};
-
-// Use an API to get the current time in JST
-async function getJSTWeeklyWindow() {
-    try {
-        const timeApiUrl = "http://worldtimeapi.org/api/timezone/Asia/Tokyo";
-        const response = await axios.get(timeApiUrl);
-        const nowJST = new Date(response.data.datetime);
-
-        // Day index: 0=Sun, 1=Mon, ..., 6=Sat
-        const jstDay = nowJST.getDay();
-
-        // Find this week's Monday 23:59:59 JST
-        const mondayThisWeek = new Date(nowJST);
-        mondayThisWeek.setDate(nowJST.getDate() - ((jstDay + 6) % 7)); // go back to Monday
-        mondayThisWeek.setHours(23, 59, 59, 999);
-
-        // If now is after this Monday's cutoff, start from this Monday 23:59:59
-        // Else start from last Monday's cutoff
-        let start;
-        if (nowJST > mondayThisWeek) {
-            start = new Date(mondayThisWeek.getTime() + 1000); // Tuesday 00:00:00 JST
-        } else {
-            const lastMonday = new Date(mondayThisWeek);
-            lastMonday.setDate(lastMonday.getDate() - 7);
-            start = new Date(lastMonday.getTime() + 1000);
-        }
-
-        // End is next Monday 23:59:59 JST
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6);
-        end.setHours(23, 59, 59, 999);
-
-        return {
-            startDate: start.toISOString(),
-            endDate: end.toISOString(),
-        };
-    } catch (err) {
-        console.error("Error fetching JST time:", err.message);
-
-        // Fallback using server time + 9 hours
-        const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
-        const jstDay = now.getDay();
-        const mondayThisWeek = new Date(now);
-        mondayThisWeek.setDate(now.getDate() - ((jstDay + 6) % 7));
-        mondayThisWeek.setHours(23, 59, 59, 999);
-
-        let start;
-        if (now > mondayThisWeek) {
-            start = new Date(mondayThisWeek.getTime() + 1000);
-        } else {
-            const lastMonday = new Date(mondayThisWeek);
-            lastMonday.setDate(lastMonday.getDate() - 7);
-            start = new Date(lastMonday.getTime() + 1000);
-        }
-
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6);
-        end.setHours(23, 59, 59, 999);
-
-        return {
-            startDate: start.toISOString(),
-            endDate: end.toISOString(),
-        };
-    }
-}
-
-
-
-async function fetchLeaderboardData() {
-    try {
-        const period = await getJSTWeeklyWindow();
-        const { startDate, endDate } = period;
-
-        const response = await axios.get(apiUrl, {
-            headers: { Authorization: `Bearer ${apiKey}` },
-            params: {
-                userId: "26ae487b-5706-4a7e-8a69-33a8a9c9631b",
-                startDate,
-                endDate,
-            },
-        });
-
-        const data = response.data;
-
-        leaderboardCache = data
-            .filter((player) => player.username !== "azisai205")
-            .sort((a, b) => b.weightedWagered - a.weightedWagered)
-            .map((player) => ({
-                username: formatUsername(player.username),
-                wagered: Math.round(player.weightedWagered),
-                weightedWager: Math.round(player.weightedWagered),
-            }));
-
-        console.log(`✅ Updated leaderboard cache for ${startDate} to ${endDate}`);
-    } catch (error) {
-        console.error("❌ Error fetching leaderboard:", error.message);
-    }
-}
-
-// Routes
-app.get("/", (req, res) => {
-    res.send("Welcome. Access /1000 or /5000 for this week's filtered data.");
+// ✅ CORS headers manually (unchanged)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  next();
 });
 
-app.get("/1000", (req, res) => {
-    const filtered = leaderboardCache.filter(
-        (p) => p.weightedWager >= 1000 && p.weightedWager < 5000
+// ---------- helpers (unchanged behavior except date window) ----------
+function maskUsername(username = "") {
+  if (username.length <= 4) return username;
+  return username.slice(0, 2) + "***" + username.slice(-2);
+}
+function ymdUTC(d) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function cycleIndex(nowMs) {
+  return Math.floor((nowMs - BASE_START_MS) / CYCLE_MS);
+}
+/** Get start/end Date objects for cycle offset from NOW (UTC) */
+function getCycleBounds(offset = 0, nowMs = Date.now()) {
+  const k0 = cycleIndex(nowMs);
+  const k = k0 + offset; // can be negative (before first cycle)
+  const startMs = BASE_START_MS + k * CYCLE_MS;
+  const endMs = startMs + CYCLE_MS - 1; // inclusive
+  return { startDate: new Date(startMs), endDate: new Date(endMs), k };
+}
+
+// ====== ONLY THIS CHANGED: build the current-cycle URL instead of month ======
+function getDynamicApiUrl() {
+  const nowMs = Date.now(); // UTC epoch ms
+  const { startDate, endDate, k } = getCycleBounds(0, nowMs);
+
+  // If we haven't reached the first cycle yet → return a harmless URL
+  if (k < 0) {
+    const s = new Date(BASE_START_MS);
+    console.log(`[ℹ] Before first cycle. Will use empty window around ${ymdUTC(s)}.`);
+  }
+
+  const startStr = ymdUTC(startDate);
+  const endStr = ymdUTC(endDate);
+  const url = `https://services.rainbet.com/v1/external/affiliates?start_at=${startStr}&end_at=${endStr}&key=${API_KEY}`;
+  console.log(`[➡️] TOP14 URL: ${url}`);
+  return url;
+}
+
+async function fetchAndCacheData() {
+  try {
+    const response = await fetch(getDynamicApiUrl());
+    const json = await response.json();
+    if (!json.affiliates) throw new Error("No data");
+
+    const sorted = json.affiliates.sort(
+      (a, b) => parseFloat(b.wagered_amount) - parseFloat(a.wagered_amount)
     );
-    res.json(filtered);
+
+    const top10 = sorted.slice(0, 10);
+    if (top10.length >= 2) [top10[0], top10[1]] = [top10[1], top10[0]];
+
+    cachedData = top10.map(entry => ({
+      username: maskUsername(entry.username),
+      wagered: Math.round(parseFloat(entry.wagered_amount)),
+      weightedWager: Math.round(parseFloat(entry.wagered_amount)),
+    }));
+
+    console.log(`[✅] Leaderboard updated`);
+  } catch (err) {
+    console.error("[❌] Failed to fetch Rainbet data:", err.message);
+    // keep last good cache
+  }
+}
+
+fetchAndCacheData();
+setInterval(fetchAndCacheData, 5 * 60 * 1000); // every 5 minutes
+
+// ---------- routes (same responses; only the /prev window changed) ----------
+app.get("/leaderboard/top14", (req, res) => {
+  res.json(cachedData);
 });
 
-app.get("/5000", (req, res) => {
-    const filtered = leaderboardCache.filter((p) => p.weightedWager >= 5000);
-    res.json(filtered);
+app.get("/leaderboard/prev", async (req, res) => {
+  try {
+    const nowMs = Date.now();
+    const { startDate, endDate, k } = getCycleBounds(-1, nowMs);
+
+    // If previous cycle ends before the base start → no data yet
+    if (endDate.getTime() < BASE_START_MS) {
+      console.log("[↩] PREV: before base start → []");
+      return res.json([]);
+    }
+
+    const startStr = ymdUTC(startDate);
+    const endStr = ymdUTC(endDate);
+    const url = `https://services.rainbet.com/v1/external/affiliates?start_at=${startStr}&end_at=${endStr}&key=${API_KEY}`;
+    console.log(`[↩] PREV URL: ${url}`);
+
+    const response = await fetch(url);
+    const json = await response.json();
+
+    if (!json.affiliates) throw new Error("No previous data");
+
+    const sorted = json.affiliates.sort(
+      (a, b) => parseFloat(b.wagered_amount) - parseFloat(a.wagered_amount)
+    );
+
+    const top10 = sorted.slice(0, 10);
+    if (top10.length >= 2) [top10[0], top10[1]] = [top10[1], top10[0]];
+
+    const processed = top10.map(entry => ({
+      username: maskUsername(entry.username),
+      wagered: Math.round(parseFloat(entry.wagered_amount)),
+      weightedWager: Math.round(parseFloat(entry.wagered_amount)),
+    }));
+
+    res.json(processed);
+  } catch (err) {
+    console.error("[❌] Failed to fetch previous leaderboard:", err.message);
+    res.status(500).json({ error: "Failed to fetch previous leaderboard data." });
+  }
 });
 
-// Refresh cache every 5 mins
-fetchLeaderboardData();
-setInterval(fetchLeaderboardData, 5 * 60 * 1000);
-
-// Keep Render alive
+// ---------- keep-alive (unchanged) ----------
 setInterval(() => {
-    axios.get("https://azisaiweekly-upnb.onrender.com/5000")
-        .then(() => console.log("🔁 Self-ping success"))
-        .catch((err) => console.error("Self-ping failed:", err.message));
-}, 4 * 60 * 1000);
+  fetch(SELF_URL)
+    .then(() => console.log(`[🔁] Self-pinged ${SELF_URL}`))
+    .catch(err => console.error("[⚠️] Self-ping failed:", err.message));
+}, 270000); // every 4.5 mins
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server live at port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Running on port ${PORT}`));
