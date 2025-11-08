@@ -1,13 +1,11 @@
 {
-  "name": "nodejs",
+  "name": "shuffle-bet-tracker",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "type": "module",
+  "description": "Tracks bets from TheGoobr on shuffle.com and sends to Discord",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "echo \"Build complete\"",
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",
