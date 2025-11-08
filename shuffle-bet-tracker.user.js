@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Shuffle.com All Bets Tracker
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  Track ALL bets on shuffle.com and send TheGoobr bets to Discord
+// @version      2.3
+// @description  Track ALL bets on shuffle.com instantly with complete data
 // @author       You
 // @match        https://shuffle.com/*
 // @match        https://*.shuffle.com/*
@@ -15,15 +15,13 @@
     'use strict';
 
     const BACKEND_URL = 'https://bd156f34-9fce-49b2-90d2-a044ad76fe9c-00-zuut6ynnxfx.sisko.replit.dev';
-    const CHECK_INTERVAL = 3000;
     const AUTH_TOKEN = 'shuffle-tracker-2024';
     
     let processedBets = new Set();
-    let isMonitoring = false;
     let betCount = 0;
     let errorCount = 0;
 
-    console.log('[Shuffle Tracker] Script loaded, monitoring ALL bets');
+    console.log('[Shuffle Tracker] Script loaded - INSTANT tracking mode');
 
     function sendBetToBackend(betData) {
         GM_xmlhttpRequest({
@@ -39,34 +37,36 @@
                     betCount++;
                     errorCount = 0;
                     updateIndicator();
-                    console.log('[Shuffle Tracker] ✅ Bet sent:', betData.username, betData.amount);
+                    console.log('[Shuffle Tracker] ✅', betData.username, betData.game, betData.betAmountText, betData.multiplierText);
                 } else {
                     errorCount++;
-                    console.error('[Shuffle Tracker] ❌ Server error:', response.status);
+                    console.error('[Shuffle Tracker] ❌ Error:', response.status);
                 }
             },
             onerror: function(error) {
                 errorCount++;
-                console.error('[Shuffle Tracker] ❌ Network error:', error);
+                console.error('[Shuffle Tracker] ❌ Network error');
                 updateIndicator();
             }
         });
     }
 
-    function createStableBetId(rowElement, username, amount, game) {
-        const textContent = rowElement.textContent.substring(0, 150);
-        const hash = simpleHash(textContent);
-        return `bet_${hash}_${username}_${amount}_${game}`;
+    function parseNumericValue(text) {
+        if (!text) return 0;
+        const cleaned = text.replace(/[\$,\s]/g, '').replace(/[^0-9.\-]/g, '');
+        const value = parseFloat(cleaned);
+        return isNaN(value) ? 0 : value;
     }
 
-    function simpleHash(str) {
+    function createStableBetId(rowElement, username, amount, game, multiplier) {
+        const textContent = rowElement.textContent.substring(0, 150);
         let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            const char = str.charCodeAt(i);
+        for (let i = 0; i < textContent.length; i++) {
+            const char = textContent.charCodeAt(i);
             hash = ((hash << 5) - hash) + char;
             hash = hash & hash;
         }
-        return Math.abs(hash).toString(36);
+        return `bet_${Math.abs(hash).toString(36)}_${username}_${amount}_${game}_${multiplier}`;
     }
 
     function parseBetRow(rowElement) {
@@ -88,10 +88,11 @@
             } else {
                 const userLink = userCell.querySelector('a[href*="/user/"]');
                 if (userLink) {
-                    username = userLink.textContent.trim() || userLink.getAttribute('href').replace('/user/', '');
+                    const href = userLink.getAttribute('href');
+                    username = userLink.textContent.trim() || (href ? href.replace('/user/', '') : 'Unknown');
                 } else {
-                    const userSpan = userCell.querySelector('span');
-                    if (userSpan) username = userSpan.textContent.trim();
+                    const userText = userCell.textContent.trim();
+                    if (userText && userText.length > 0) username = userText;
                 }
             }
 
@@ -101,144 +102,116 @@
                 game = gameTitle.textContent.trim();
             } else {
                 const gameButton = gameCell.querySelector('button');
-                if (gameButton) game = gameButton.textContent.trim();
+                game = gameButton ? gameButton.textContent.trim() : gameCell.textContent.trim();
             }
 
-            let amount = 'Unknown';
+            let betAmountText = '';
             const amountSpan = amountCell.querySelector('.FiatWithTooltip_evenlySpacedNumber__wQSLB, .fiat-with-tool-tip-text');
-            if (amountSpan) {
-                amount = amountSpan.textContent.trim();
-            }
+            betAmountText = amountSpan ? amountSpan.textContent.trim() : amountCell.textContent.trim();
+            const betAmount = parseNumericValue(betAmountText);
 
-            let multiplier = 'Unknown';
-            const multiplierSpan = multiplierCell.querySelector('.MultiplierCell_root__Wd4zc span');
+            let multiplierText = '';
+            const multiplierSpan = multiplierCell.querySelector('.MultiplierCell_root__Wd4zc span[style*="color"]');
             if (multiplierSpan) {
-                multiplier = multiplierSpan.textContent.trim();
+                multiplierText = multiplierSpan.textContent.trim();
+            } else {
+                const anyMultiplierSpan = multiplierCell.querySelector('span');
+                multiplierText = anyMultiplierSpan ? anyMultiplierSpan.textContent.trim() : multiplierCell.textContent.trim();
             }
+            const multiplier = parseNumericValue(multiplierText);
 
-            let payout = 'Unknown';
+            let payoutText = '';
             const payoutSpan = payoutCell.querySelector('.FiatWithTooltip_evenlySpacedNumber__wQSLB, .fiat-with-tool-tip-text');
-            if (payoutSpan) {
-                payout = payoutSpan.textContent.trim();
-            }
+            payoutText = payoutSpan ? payoutSpan.textContent.trim() : payoutCell.textContent.trim();
+            const payout = parseNumericValue(payoutText);
 
-            const betId = createStableBetId(rowElement, username, amount, game);
-            const timestamp = Date.now();
+            const profit = payout;
+            const isWin = payout > 0;
+
+            const betId = createStableBetId(rowElement, username, betAmount, game, multiplier);
 
             return {
                 betId,
                 username,
-                amount,
                 game,
+                betAmount,
+                betAmountText,
                 multiplier,
-                profit: payout,
-                timestamp,
+                multiplierText,
+                payout,
+                payoutText,
+                profit,
+                isWin,
+                timestamp: Date.now(),
                 url: window.location.href
             };
         } catch (error) {
-            console.error('[Shuffle Tracker] Error parsing bet row:', error);
+            console.error('[Shuffle Tracker] Parse error:', error);
             return null;
         }
     }
 
     function scanForBets() {
-        try {
-            const tableBody = document.querySelector('tbody[data-testid="table-body"]');
-            
-            if (!tableBody) {
-                console.log('[Shuffle Tracker] Table not found yet...');
-                return;
-            }
+        const tableBody = document.querySelector('tbody[data-testid="table-body"]');
+        if (!tableBody) return;
 
-            const rows = tableBody.querySelectorAll('tr[aria-label="View detail"]');
-            
-            if (rows.length === 0) {
-                console.log('[Shuffle Tracker] No bet rows found');
-                return;
-            }
+        const rows = tableBody.querySelectorAll('tr[aria-label="View detail"]');
+        if (rows.length === 0) return;
 
-            console.log(`[Shuffle Tracker] Found ${rows.length} bet rows`);
+        rows.forEach(row => {
+            const betData = parseBetRow(row);
             
-            rows.forEach(row => {
-                const betData = parseBetRow(row);
-                
-                if (betData && betData.username && betData.username !== 'Unknown') {
-                    if (!processedBets.has(betData.betId)) {
-                        console.log('[Shuffle Tracker] 🆕 New bet:', betData.username, betData.game, betData.amount);
-                        processedBets.add(betData.betId);
-                        sendBetToBackend(betData);
-                        
-                        if (processedBets.size > 2000) {
-                            const toDelete = Array.from(processedBets).slice(0, 500);
-                            toDelete.forEach(id => processedBets.delete(id));
-                        }
+            if (betData && betData.username && betData.username !== 'Unknown') {
+                if (!processedBets.has(betData.betId)) {
+                    processedBets.add(betData.betId);
+                    sendBetToBackend(betData);
+                    
+                    if (processedBets.size > 5000) {
+                        const toDelete = Array.from(processedBets).slice(0, 2000);
+                        toDelete.forEach(id => processedBets.delete(id));
                     }
                 }
-            });
-        } catch (error) {
-            console.error('[Shuffle Tracker] Error in scanForBets:', error);
-        }
+            }
+        });
     }
 
     function updateIndicator() {
         const indicator = document.getElementById('shuffle-tracker-indicator');
         if (indicator) {
-            const status = errorCount > 0 ? `⚠️ ${errorCount} errors` : '✅';
-            indicator.textContent = `${status} Tracking All Bets (${betCount} sent)`;
+            const status = errorCount > 0 ? `⚠️ ${errorCount}` : '✅';
+            indicator.textContent = `${status} ${betCount} sent`;
             indicator.style.background = errorCount > 3 ? '#ff0000' : '#00ff00';
         }
     }
 
     function startMonitoring() {
-        if (isMonitoring) return;
-        isMonitoring = true;
+        console.log('[Shuffle Tracker] 🚀 Instant monitoring active');
         
-        console.log('[Shuffle Tracker] Starting monitoring for ALL bets...');
+        scanForBets();
+        setInterval(scanForBets, 500);
         
-        setTimeout(() => {
+        const observer = new MutationObserver(() => {
             scanForBets();
-            setInterval(scanForBets, CHECK_INTERVAL);
-        }, 2000);
-        
-        const observer = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                if (mutation.addedNodes.length > 0) {
-                    const hasTableChanges = Array.from(mutation.addedNodes).some(node => 
-                        node.nodeType === 1 && (
-                            node.matches && node.matches('tr[aria-label="View detail"]') ||
-                            node.querySelector && node.querySelector('tr[aria-label="View detail"]')
-                        )
-                    );
-                    
-                    if (hasTableChanges) {
-                        setTimeout(scanForBets, 500);
-                        break;
-                    }
-                }
-            }
         });
         
-        const targetNode = document.body;
-        observer.observe(targetNode, {
+        observer.observe(document.body, {
             childList: true,
             subtree: true
         });
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(startMonitoring, 3000);
-        });
+        document.addEventListener('DOMContentLoaded', startMonitoring);
     } else {
-        setTimeout(startMonitoring, 3000);
+        startMonitoring();
     }
 
     const indicator = document.createElement('div');
     indicator.id = 'shuffle-tracker-indicator';
-    indicator.style.cssText = 'position:fixed;top:10px;right:10px;background:#00ff00;color:#000;padding:8px 12px;border-radius:4px;z-index:999999;font-family:monospace;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.3);font-weight:bold;';
-    indicator.textContent = `✅ Tracking All Bets (0 sent)`;
+    indicator.style.cssText = 'position:fixed;top:10px;right:10px;background:#00ff00;color:#000;padding:10px 15px;border-radius:6px;z-index:999999;font-family:monospace;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.5);font-weight:bold;';
+    indicator.textContent = `✅ 0 sent`;
     
     setTimeout(() => {
         document.body.appendChild(indicator);
-    }, 1000);
+    }, 100);
 })();

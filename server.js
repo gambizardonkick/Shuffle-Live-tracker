@@ -44,9 +44,24 @@ function getWeekNumber(d) {
     return weekNo;
 }
 
-function parseAmount(amountStr) {
-    const cleaned = amountStr.replace(/[^0-9.-]/g, '');
-    return parseFloat(cleaned) || 0;
+function initStats() {
+    return {
+        totalBets: 0,
+        totalWagered: 0,
+        totalPayout: 0,
+        totalProfit: 0,
+        wins: 0,
+        losses: 0,
+        winRate: 0,
+        averageBet: 0,
+        averageMultiplier: 0,
+        averagePayout: 0,
+        biggestWin: 0,
+        biggestLoss: 0,
+        games: {},
+        users: {},
+        multipliers: []
+    };
 }
 
 function updateStats(bet, category) {
@@ -56,36 +71,44 @@ function updateStats(bet, category) {
     
     const statsObj = stats[category];
     
-    if (!statsObj.daily[dayKey]) {
-        statsObj.daily[dayKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} };
-    }
-    if (!statsObj.weekly[weekKey]) {
-        statsObj.weekly[weekKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} };
-    }
-    if (!statsObj.monthly[monthKey]) {
-        statsObj.monthly[monthKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} };
-    }
+    if (!statsObj.daily[dayKey]) statsObj.daily[dayKey] = initStats();
+    if (!statsObj.weekly[weekKey]) statsObj.weekly[weekKey] = initStats();
+    if (!statsObj.monthly[monthKey]) statsObj.monthly[monthKey] = initStats();
     
-    const amount = parseAmount(bet.amount);
-    const profit = parseAmount(bet.profit);
+    const betAmount = bet.betAmount || 0;
+    const payout = bet.payout || 0;
+    const profit = payout;
+    const multiplier = bet.multiplier || 0;
+    const isWin = profit > 0;
     
-    statsObj.daily[dayKey].totalBets++;
-    statsObj.daily[dayKey].totalWagered += amount;
-    statsObj.daily[dayKey].totalProfit += profit;
-    statsObj.daily[dayKey].games[bet.game] = (statsObj.daily[dayKey].games[bet.game] || 0) + 1;
-    statsObj.daily[dayKey].users[bet.username] = (statsObj.daily[dayKey].users[bet.username] || 0) + 1;
-    
-    statsObj.weekly[weekKey].totalBets++;
-    statsObj.weekly[weekKey].totalWagered += amount;
-    statsObj.weekly[weekKey].totalProfit += profit;
-    statsObj.weekly[weekKey].games[bet.game] = (statsObj.weekly[weekKey].games[bet.game] || 0) + 1;
-    statsObj.weekly[weekKey].users[bet.username] = (statsObj.weekly[weekKey].users[bet.username] || 0) + 1;
-    
-    statsObj.monthly[monthKey].totalBets++;
-    statsObj.monthly[monthKey].totalWagered += amount;
-    statsObj.monthly[monthKey].totalProfit += profit;
-    statsObj.monthly[monthKey].games[bet.game] = (statsObj.monthly[monthKey].games[bet.game] || 0) + 1;
-    statsObj.monthly[monthKey].users[bet.username] = (statsObj.monthly[monthKey].users[bet.username] || 0) + 1;
+    [dayKey, weekKey, monthKey].forEach((key, idx) => {
+        const periodStats = idx === 0 ? statsObj.daily[key] : idx === 1 ? statsObj.weekly[key] : statsObj.monthly[key];
+        
+        periodStats.totalBets++;
+        periodStats.totalWagered += betAmount;
+        periodStats.totalPayout += isWin ? payout : 0;
+        periodStats.totalProfit += profit;
+        
+        if (isWin) {
+            periodStats.wins++;
+            if (profit > periodStats.biggestWin) periodStats.biggestWin = profit;
+        } else {
+            periodStats.losses++;
+            if (profit < periodStats.biggestLoss) periodStats.biggestLoss = profit;
+        }
+        
+        periodStats.winRate = periodStats.totalBets > 0 ? (periodStats.wins / periodStats.totalBets * 100) : 0;
+        periodStats.averageBet = periodStats.totalBets > 0 ? (periodStats.totalWagered / periodStats.totalBets) : 0;
+        periodStats.averagePayout = periodStats.totalBets > 0 ? (periodStats.totalPayout / periodStats.totalBets) : 0;
+        
+        periodStats.multipliers.push(multiplier);
+        const validMultipliers = periodStats.multipliers.filter(m => m > 0);
+        periodStats.averageMultiplier = validMultipliers.length > 0 ? 
+            (validMultipliers.reduce((a, b) => a + b, 0) / validMultipliers.length) : 0;
+        
+        periodStats.games[bet.game] = (periodStats.games[bet.game] || 0) + 1;
+        periodStats.users[bet.username] = (periodStats.users[bet.username] || 0) + 1;
+    });
 }
 
 async function sendToDiscord(bet) {
@@ -94,9 +117,12 @@ async function sendToDiscord(bet) {
         return;
     }
     
+    const color = bet.isWin ? 0x00ff00 : 0xff0000;
+    const profitText = bet.isWin ? `+${bet.payoutText}` : bet.payoutText;
+    
     const embed = {
-        title: `🎲 New Bet from ${TARGET_USERNAME}`,
-        color: 0x00ff00,
+        title: `🎲 ${bet.isWin ? '✅ WIN' : '❌ LOSS'} - ${TARGET_USERNAME}`,
+        color: color,
         fields: [
             {
                 name: 'Game',
@@ -104,18 +130,18 @@ async function sendToDiscord(bet) {
                 inline: true
             },
             {
-                name: 'Amount',
-                value: bet.amount || 'Unknown',
+                name: 'Bet Amount',
+                value: bet.betAmountText || 'Unknown',
                 inline: true
             },
             {
                 name: 'Multiplier',
-                value: bet.multiplier || 'Unknown',
+                value: bet.multiplierText || 'Unknown',
                 inline: true
             },
             {
-                name: 'Profit',
-                value: bet.profit || 'Unknown',
+                name: 'Payout',
+                value: profitText || 'Unknown',
                 inline: true
             },
             {
@@ -164,30 +190,37 @@ async function sendStatsToDiscord(period, category = 'thegoobr') {
     }
     
     const gamesText = Object.entries(data.games)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
         .map(([game, count]) => `${game}: ${count}`)
         .join('\n') || 'No games';
     
     const embed = {
         title: title,
-        color: 0x0099ff,
+        color: data.totalProfit >= 0 ? 0x00ff00 : 0xff0000,
         fields: [
             {
-                name: 'Total Bets',
-                value: String(data.totalBets),
+                name: '📊 Overview',
+                value: `Bets: ${data.totalBets}\nWins: ${data.wins} | Losses: ${data.losses}\nWin Rate: ${data.winRate.toFixed(1)}%`,
                 inline: true
             },
             {
-                name: 'Total Wagered',
-                value: `$${data.totalWagered.toFixed(2)}`,
+                name: '💰 Money',
+                value: `Wagered: $${data.totalWagered.toFixed(2)}\nPayout: $${data.totalPayout.toFixed(2)}\nProfit: $${data.totalProfit.toFixed(2)}`,
                 inline: true
             },
             {
-                name: 'Total Profit',
-                value: `$${data.totalProfit.toFixed(2)}`,
+                name: '📈 Averages',
+                value: `Bet: $${data.averageBet.toFixed(2)}\nMultiplier: ${data.averageMultiplier.toFixed(2)}x\nPayout: $${data.averagePayout.toFixed(2)}`,
                 inline: true
             },
             {
-                name: 'Games Played',
+                name: '🏆 Records',
+                value: `Biggest Win: $${data.biggestWin.toFixed(2)}\nBiggest Loss: $${data.biggestLoss.toFixed(2)}`,
+                inline: true
+            },
+            {
+                name: '🎮 Top Games',
                 value: gamesText,
                 inline: false
             }
@@ -215,16 +248,20 @@ app.post('/api/bet', async (req, res) => {
         const betData = req.body;
         
         if (betIds.has(betData.betId)) {
-            return res.json({ success: true, message: 'Bet already tracked (duplicate)' });
+            return res.json({ success: true, message: 'Duplicate' });
         }
         
-        console.log('✅ New bet:', betData.username, betData.amount);
+        console.log('✅ New bet:', betData.username, betData.game, betData.betAmountText);
         
         betIds.add(betData.betId);
         bets.push(betData);
         
-        if (betIds.size > 5000) {
-            const toDelete = Array.from(betIds).slice(0, 1000);
+        if (bets.length > 10000) {
+            bets.splice(0, 5000);
+        }
+        
+        if (betIds.size > 10000) {
+            const toDelete = Array.from(betIds).slice(0, 5000);
             toDelete.forEach(id => betIds.delete(id));
         }
         
@@ -258,7 +295,7 @@ app.get('/api/stats/:period', (req, res) => {
         data = statsObj.monthly[getMonthKey(now)];
     }
     
-    res.json(data || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} });
+    res.json(data || initStats());
 });
 
 app.post('/api/stats/:period/send', async (req, res) => {
@@ -284,14 +321,14 @@ app.get('/api/stats/all', (req, res) => {
     const now = new Date();
     res.json({
         all: {
-            daily: stats.all.daily[getDateKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
-            weekly: stats.all.weekly[getWeekKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
-            monthly: stats.all.monthly[getMonthKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} }
+            daily: stats.all.daily[getDateKey(now)] || initStats(),
+            weekly: stats.all.weekly[getWeekKey(now)] || initStats(),
+            monthly: stats.all.monthly[getMonthKey(now)] || initStats()
         },
         thegoobr: {
-            daily: stats.thegoobr.daily[getDateKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
-            weekly: stats.thegoobr.weekly[getWeekKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
-            monthly: stats.thegoobr.monthly[getMonthKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} }
+            daily: stats.thegoobr.daily[getDateKey(now)] || initStats(),
+            weekly: stats.thegoobr.weekly[getWeekKey(now)] || initStats(),
+            monthly: stats.thegoobr.monthly[getMonthKey(now)] || initStats()
         }
     });
 });
@@ -303,30 +340,35 @@ app.get('/', (req, res) => {
         <head>
             <title>Shuffle.com Bet Tracker</title>
             <style>
+                * { box-sizing: border-box; }
                 body { font-family: Arial, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #eee; }
-                h1 { color: #00ff00; }
+                h1 { color: #00ff00; margin-bottom: 10px; }
                 .tabs { display: flex; gap: 10px; margin: 20px 0; }
-                .tab { background: #16213e; color: #00ff00; border: 2px solid #00ff00; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
+                .tab { background: #16213e; color: #00ff00; border: 2px solid #00ff00; padding: 10px 20px; border-radius: 4px; cursor: pointer; transition: all 0.3s; }
                 .tab.active { background: #00ff00; color: #000; }
                 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }
                 .stat-card { background: #16213e; padding: 20px; border-radius: 8px; border: 2px solid #00ff00; }
-                .stat-card h2 { margin-top: 0; color: #00ff00; }
-                .stat-item { margin: 10px 0; }
+                .stat-card h2 { margin-top: 0; color: #00ff00; font-size: 18px; }
+                .stat-item { margin: 8px 0; font-size: 14px; }
+                .stat-item strong { color: #aaa; }
                 .bets { margin-top: 30px; }
-                table { width: 100%; border-collapse: collapse; }
-                th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
-                th { background: #16213e; color: #00ff00; }
-                button { background: #00ff00; color: #000; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 5px; }
+                table { width: 100%; border-collapse: collapse; font-size: 13px; }
+                th, td { padding: 8px; text-align: left; border-bottom: 1px solid #333; }
+                th { background: #16213e; color: #00ff00; position: sticky; top: 0; }
+                button { background: #00ff00; color: #000; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 5px; font-weight: bold; }
                 button:hover { background: #00cc00; }
-                .positive { color: #00ff00; }
-                .negative { color: #ff0000; }
+                .positive { color: #00ff00; font-weight: bold; }
+                .negative { color: #ff0000; font-weight: bold; }
                 .highlight { background: #2d3748; }
                 .filter { margin: 10px 0; }
                 input { padding: 8px; background: #16213e; color: #eee; border: 1px solid #00ff00; border-radius: 4px; }
+                .win { color: #00ff00; }
+                .loss { color: #ff0000; }
             </style>
         </head>
         <body>
             <h1>🎲 Shuffle.com Bet Tracker</h1>
+            <p style="color: #888;">Live tracking - Auto-refresh every 5s</p>
             
             <div class="tabs">
                 <div class="tab active" onclick="switchTab('all')">All Bets</div>
@@ -334,10 +376,10 @@ app.get('/', (req, res) => {
             </div>
             
             <div>
-                <button onclick="sendStats('daily')">Send Daily Stats to Discord</button>
-                <button onclick="sendStats('weekly')">Send Weekly Stats to Discord</button>
-                <button onclick="sendStats('monthly')">Send Monthly Stats to Discord</button>
-                <button onclick="loadData()">Refresh</button>
+                <button onclick="sendStats('daily')">📅 Send Daily Stats to Discord</button>
+                <button onclick="sendStats('weekly')">📊 Send Weekly Stats to Discord</button>
+                <button onclick="sendStats('monthly')">📈 Send Monthly Stats to Discord</button>
+                <button onclick="loadData()">🔄 Refresh Now</button>
             </div>
             
             <div class="stats" id="stats"></div>
@@ -353,9 +395,10 @@ app.get('/', (req, res) => {
                             <th>Time</th>
                             <th>Username</th>
                             <th>Game</th>
-                            <th>Amount</th>
+                            <th>Bet Amount</th>
                             <th>Multiplier</th>
-                            <th>Profit</th>
+                            <th>Payout</th>
+                            <th>Result</th>
                         </tr>
                     </thead>
                     <tbody id="betsBody"></tbody>
@@ -387,23 +430,41 @@ app.get('/', (req, res) => {
                         <div class="stat-card">
                             <h2>📅 Daily Stats</h2>
                             <div class="stat-item"><strong>Total Bets:</strong> \${statsData.daily.totalBets}</div>
-                            <div class="stat-item"><strong>Total Wagered:</strong> $\${statsData.daily.totalWagered.toFixed(2)}</div>
-                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${statsData.daily.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.daily.totalProfit.toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Unique Users:</strong> \${Object.keys(statsData.daily.users || {}).length}</div>
+                            <div class="stat-item"><strong>Wins/Losses:</strong> <span class="positive">\${statsData.daily.wins}</span> / <span class="negative">\${statsData.daily.losses}</span></div>
+                            <div class="stat-item"><strong>Win Rate:</strong> \${statsData.daily.winRate.toFixed(1)}%</div>
+                            <div class="stat-item"><strong>Wagered:</strong> $\${statsData.daily.totalWagered.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Payout:</strong> $\${statsData.daily.totalPayout.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Net Profit:</strong> <span class="\${statsData.daily.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.daily.totalProfit.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Avg Bet:</strong> $\${statsData.daily.averageBet.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Avg Multiplier:</strong> \${statsData.daily.averageMultiplier.toFixed(2)}x</div>
+                            <div class="stat-item"><strong>Biggest Win:</strong> <span class="positive">$\${statsData.daily.biggestWin.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Biggest Loss:</strong> <span class="negative">$\${statsData.daily.biggestLoss.toFixed(2)}</span></div>
                         </div>
                         <div class="stat-card">
                             <h2>📊 Weekly Stats</h2>
                             <div class="stat-item"><strong>Total Bets:</strong> \${statsData.weekly.totalBets}</div>
-                            <div class="stat-item"><strong>Total Wagered:</strong> $\${statsData.weekly.totalWagered.toFixed(2)}</div>
-                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${statsData.weekly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.weekly.totalProfit.toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Unique Users:</strong> \${Object.keys(statsData.weekly.users || {}).length}</div>
+                            <div class="stat-item"><strong>Wins/Losses:</strong> <span class="positive">\${statsData.weekly.wins}</span> / <span class="negative">\${statsData.weekly.losses}</span></div>
+                            <div class="stat-item"><strong>Win Rate:</strong> \${statsData.weekly.winRate.toFixed(1)}%</div>
+                            <div class="stat-item"><strong>Wagered:</strong> $\${statsData.weekly.totalWagered.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Payout:</strong> $\${statsData.weekly.totalPayout.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Net Profit:</strong> <span class="\${statsData.weekly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.weekly.totalProfit.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Avg Bet:</strong> $\${statsData.weekly.averageBet.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Avg Multiplier:</strong> \${statsData.weekly.averageMultiplier.toFixed(2)}x</div>
+                            <div class="stat-item"><strong>Biggest Win:</strong> <span class="positive">$\${statsData.weekly.biggestWin.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Biggest Loss:</strong> <span class="negative">$\${statsData.weekly.biggestLoss.toFixed(2)}</span></div>
                         </div>
                         <div class="stat-card">
                             <h2>📈 Monthly Stats</h2>
                             <div class="stat-item"><strong>Total Bets:</strong> \${statsData.monthly.totalBets}</div>
-                            <div class="stat-item"><strong>Total Wagered:</strong> $\${statsData.monthly.totalWagered.toFixed(2)}</div>
-                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${statsData.monthly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.monthly.totalProfit.toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Unique Users:</strong> \${Object.keys(statsData.monthly.users || {}).length}</div>
+                            <div class="stat-item"><strong>Wins/Losses:</strong> <span class="positive">\${statsData.monthly.wins}</span> / <span class="negative">\${statsData.monthly.losses}</span></div>
+                            <div class="stat-item"><strong>Win Rate:</strong> \${statsData.monthly.winRate.toFixed(1)}%</div>
+                            <div class="stat-item"><strong>Wagered:</strong> $\${statsData.monthly.totalWagered.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Payout:</strong> $\${statsData.monthly.totalPayout.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Net Profit:</strong> <span class="\${statsData.monthly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.monthly.totalProfit.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Avg Bet:</strong> $\${statsData.monthly.averageBet.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Avg Multiplier:</strong> \${statsData.monthly.averageMultiplier.toFixed(2)}x</div>
+                            <div class="stat-item"><strong>Biggest Win:</strong> <span class="positive">$\${statsData.monthly.biggestWin.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Biggest Loss:</strong> <span class="negative">$\${statsData.monthly.biggestLoss.toFixed(2)}</span></div>
                         </div>
                     \`;
                     
@@ -411,10 +472,9 @@ app.get('/', (req, res) => {
                 }
                 
                 async function loadBets() {
-                    const url = currentTab === 'thegoobr' ? '/api/bets?username=TheGoobr&limit=100' : '/api/bets?limit=100';
+                    const url = currentTab === 'thegoobr' ? '/api/bets?username=TheGoobr&limit=150' : '/api/bets?limit=150';
                     const res = await fetch(url);
                     allBets = await res.json();
-                    
                     displayBets(allBets);
                 }
                 
@@ -423,16 +483,17 @@ app.get('/', (req, res) => {
                     
                     const rows = betsToShow.map(bet => \`
                         <tr class="\${bet.username === 'TheGoobr' ? 'highlight' : ''}">
-                            <td>\${new Date(bet.timestamp).toLocaleString()}</td>
+                            <td>\${new Date(bet.timestamp).toLocaleTimeString()}</td>
                             <td><strong>\${bet.username}</strong></td>
                             <td>\${bet.game}</td>
-                            <td>\${bet.amount}</td>
-                            <td>\${bet.multiplier}</td>
-                            <td>\${bet.profit}</td>
+                            <td>\${bet.betAmountText || bet.amount || 'N/A'}</td>
+                            <td>\${bet.multiplierText || bet.multiplier || 'N/A'}</td>
+                            <td class="\${bet.isWin ? 'win' : 'loss'}">\${bet.payoutText || bet.profit || 'N/A'}</td>
+                            <td>\${bet.isWin ? '✅ WIN' : '❌ LOSS'}</td>
                         </tr>
                     \`).join('');
                     
-                    document.getElementById('betsBody').innerHTML = rows || '<tr><td colspan="6">No bets yet</td></tr>';
+                    document.getElementById('betsBody').innerHTML = rows || '<tr><td colspan="7">No bets yet</td></tr>';
                 }
                 
                 function filterBets() {
@@ -452,7 +513,7 @@ app.get('/', (req, res) => {
                 }
                 
                 loadData();
-                setInterval(loadData, 10000);
+                setInterval(loadData, 5000);
             </script>
         </body>
         </html>
@@ -463,5 +524,5 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`📊 Dashboard: http://localhost:${PORT}`);
     console.log(`🎲 Tracking ALL bets, Discord notifications for: ${TARGET_USERNAME}`);
-    console.log(`📨 Discord webhook configured: ${DISCORD_WEBHOOK_URL ? 'Yes' : 'No'}`);
+    console.log(`📨 Discord webhook: ${DISCORD_WEBHOOK_URL ? 'Configured' : 'Not configured'}`);
 });
