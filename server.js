@@ -5,25 +5,23 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Discord webhook URL from environment
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+const AUTH_TOKEN = 'shuffle-tracker-2024';
+const TARGET_USERNAME = 'TheGoobr';
 
-// Storage for bet tracking
 const bets = [];
+const betIds = new Set();
 const stats = {
-    daily: {},
-    weekly: {},
-    monthly: {}
+    all: { daily: {}, weekly: {}, monthly: {} },
+    thegoobr: { daily: {}, weekly: {}, monthly: {} }
 };
 
-// Utility functions
 function getDateKey(date) {
     const d = new Date(date);
-    return d.toISOString().split('T')[0]; // YYYY-MM-DD
+    return d.toISOString().split('T')[0];
 }
 
 function getWeekKey(date) {
@@ -47,51 +45,49 @@ function getWeekNumber(d) {
 }
 
 function parseAmount(amountStr) {
-    // Remove currency symbols and parse
     const cleaned = amountStr.replace(/[^0-9.-]/g, '');
     return parseFloat(cleaned) || 0;
 }
 
-// Update stats
-function updateStats(bet) {
+function updateStats(bet, category) {
     const dayKey = getDateKey(bet.timestamp);
     const weekKey = getWeekKey(bet.timestamp);
     const monthKey = getMonthKey(bet.timestamp);
     
-    // Initialize if needed
-    if (!stats.daily[dayKey]) {
-        stats.daily[dayKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {} };
+    const statsObj = stats[category];
+    
+    if (!statsObj.daily[dayKey]) {
+        statsObj.daily[dayKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} };
     }
-    if (!stats.weekly[weekKey]) {
-        stats.weekly[weekKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {} };
+    if (!statsObj.weekly[weekKey]) {
+        statsObj.weekly[weekKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} };
     }
-    if (!stats.monthly[monthKey]) {
-        stats.monthly[monthKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {} };
+    if (!statsObj.monthly[monthKey]) {
+        statsObj.monthly[monthKey] = { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} };
     }
     
     const amount = parseAmount(bet.amount);
     const profit = parseAmount(bet.profit);
     
-    // Update daily stats
-    stats.daily[dayKey].totalBets++;
-    stats.daily[dayKey].totalWagered += amount;
-    stats.daily[dayKey].totalProfit += profit;
-    stats.daily[dayKey].games[bet.game] = (stats.daily[dayKey].games[bet.game] || 0) + 1;
+    statsObj.daily[dayKey].totalBets++;
+    statsObj.daily[dayKey].totalWagered += amount;
+    statsObj.daily[dayKey].totalProfit += profit;
+    statsObj.daily[dayKey].games[bet.game] = (statsObj.daily[dayKey].games[bet.game] || 0) + 1;
+    statsObj.daily[dayKey].users[bet.username] = (statsObj.daily[dayKey].users[bet.username] || 0) + 1;
     
-    // Update weekly stats
-    stats.weekly[weekKey].totalBets++;
-    stats.weekly[weekKey].totalWagered += amount;
-    stats.weekly[weekKey].totalProfit += profit;
-    stats.weekly[weekKey].games[bet.game] = (stats.weekly[weekKey].games[bet.game] || 0) + 1;
+    statsObj.weekly[weekKey].totalBets++;
+    statsObj.weekly[weekKey].totalWagered += amount;
+    statsObj.weekly[weekKey].totalProfit += profit;
+    statsObj.weekly[weekKey].games[bet.game] = (statsObj.weekly[weekKey].games[bet.game] || 0) + 1;
+    statsObj.weekly[weekKey].users[bet.username] = (statsObj.weekly[weekKey].users[bet.username] || 0) + 1;
     
-    // Update monthly stats
-    stats.monthly[monthKey].totalBets++;
-    stats.monthly[monthKey].totalWagered += amount;
-    stats.monthly[monthKey].totalProfit += profit;
-    stats.monthly[monthKey].games[bet.game] = (stats.monthly[monthKey].games[bet.game] || 0) + 1;
+    statsObj.monthly[monthKey].totalBets++;
+    statsObj.monthly[monthKey].totalWagered += amount;
+    statsObj.monthly[monthKey].totalProfit += profit;
+    statsObj.monthly[monthKey].games[bet.game] = (statsObj.monthly[monthKey].games[bet.game] || 0) + 1;
+    statsObj.monthly[monthKey].users[bet.username] = (statsObj.monthly[monthKey].users[bet.username] || 0) + 1;
 }
 
-// Send to Discord
 async function sendToDiscord(bet) {
     if (!DISCORD_WEBHOOK_URL) {
         console.error('Discord webhook URL not configured');
@@ -99,7 +95,7 @@ async function sendToDiscord(bet) {
     }
     
     const embed = {
-        title: '🎲 New Bet from TheGoobr',
+        title: `🎲 New Bet from ${TARGET_USERNAME}`,
         color: 0x00ff00,
         fields: [
             {
@@ -135,35 +131,35 @@ async function sendToDiscord(bet) {
         await axios.post(DISCORD_WEBHOOK_URL, {
             embeds: [embed]
         });
-        console.log('Bet sent to Discord');
+        console.log(`✅ Sent ${TARGET_USERNAME} bet to Discord`);
     } catch (error) {
         console.error('Error sending to Discord:', error.message);
     }
 }
 
-// Send stats to Discord
-async function sendStatsToDiscord(period) {
+async function sendStatsToDiscord(period, category = 'thegoobr') {
     if (!DISCORD_WEBHOOK_URL) return;
     
     let data, title;
     const now = new Date();
+    const statsObj = stats[category];
     
     if (period === 'daily') {
         const key = getDateKey(now);
-        data = stats.daily[key];
-        title = `📊 Daily Stats for ${key}`;
+        data = statsObj.daily[key];
+        title = `📊 Daily Stats for ${category === 'thegoobr' ? TARGET_USERNAME : 'All Users'} - ${key}`;
     } else if (period === 'weekly') {
         const key = getWeekKey(now);
-        data = stats.weekly[key];
-        title = `📊 Weekly Stats for ${key}`;
+        data = statsObj.weekly[key];
+        title = `📊 Weekly Stats for ${category === 'thegoobr' ? TARGET_USERNAME : 'All Users'} - ${key}`;
     } else if (period === 'monthly') {
         const key = getMonthKey(now);
-        data = stats.monthly[key];
-        title = `📊 Monthly Stats for ${key}`;
+        data = statsObj.monthly[key];
+        title = `📊 Monthly Stats for ${category === 'thegoobr' ? TARGET_USERNAME : 'All Users'} - ${key}`;
     }
     
     if (!data) {
-        console.log('No data available for', period);
+        console.log('No data available for', period, category);
         return;
     }
     
@@ -209,20 +205,35 @@ async function sendStatsToDiscord(period) {
     }
 }
 
-// API Routes
 app.post('/api/bet', async (req, res) => {
     try {
-        const betData = req.body;
-        console.log('Received bet:', betData);
+        const authToken = req.headers['x-auth-token'];
+        if (authToken !== AUTH_TOKEN) {
+            return res.status(401).json({ success: false, error: 'Unauthorized' });
+        }
         
-        // Store bet
+        const betData = req.body;
+        
+        if (betIds.has(betData.betId)) {
+            return res.json({ success: true, message: 'Bet already tracked (duplicate)' });
+        }
+        
+        console.log('✅ New bet:', betData.username, betData.amount);
+        
+        betIds.add(betData.betId);
         bets.push(betData);
         
-        // Update stats
-        updateStats(betData);
+        if (betIds.size > 5000) {
+            const toDelete = Array.from(betIds).slice(0, 1000);
+            toDelete.forEach(id => betIds.delete(id));
+        }
         
-        // Send to Discord
-        await sendToDiscord(betData);
+        updateStats(betData, 'all');
+        
+        if (betData.username === TARGET_USERNAME) {
+            updateStats(betData, 'thegoobr');
+            await sendToDiscord(betData);
+        }
         
         res.json({ success: true, message: 'Bet tracked' });
     } catch (error) {
@@ -233,37 +244,55 @@ app.post('/api/bet', async (req, res) => {
 
 app.get('/api/stats/:period', (req, res) => {
     const period = req.params.period;
+    const category = req.query.category || 'all';
     const now = new Date();
     
+    const statsObj = stats[category];
     let data;
+    
     if (period === 'daily') {
-        data = stats.daily[getDateKey(now)];
+        data = statsObj.daily[getDateKey(now)];
     } else if (period === 'weekly') {
-        data = stats.weekly[getWeekKey(now)];
+        data = statsObj.weekly[getWeekKey(now)];
     } else if (period === 'monthly') {
-        data = stats.monthly[getMonthKey(now)];
+        data = statsObj.monthly[getMonthKey(now)];
     }
     
-    res.json(data || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {} });
+    res.json(data || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} });
 });
 
 app.post('/api/stats/:period/send', async (req, res) => {
     const period = req.params.period;
-    await sendStatsToDiscord(period);
+    const category = req.query.category || 'thegoobr';
+    await sendStatsToDiscord(period, category);
     res.json({ success: true });
 });
 
 app.get('/api/bets', (req, res) => {
-    const limit = parseInt(req.query.limit) || 50;
-    res.json(bets.slice(-limit).reverse());
+    const limit = parseInt(req.query.limit) || 100;
+    const username = req.query.username;
+    
+    let filteredBets = bets;
+    if (username) {
+        filteredBets = bets.filter(b => b.username === username);
+    }
+    
+    res.json(filteredBets.slice(-limit).reverse());
 });
 
 app.get('/api/stats/all', (req, res) => {
     const now = new Date();
     res.json({
-        daily: stats.daily[getDateKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {} },
-        weekly: stats.weekly[getWeekKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {} },
-        monthly: stats.monthly[getMonthKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {} }
+        all: {
+            daily: stats.all.daily[getDateKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
+            weekly: stats.all.weekly[getWeekKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
+            monthly: stats.all.monthly[getMonthKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} }
+        },
+        thegoobr: {
+            daily: stats.thegoobr.daily[getDateKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
+            weekly: stats.thegoobr.weekly[getWeekKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} },
+            monthly: stats.thegoobr.monthly[getMonthKey(now)] || { totalBets: 0, totalWagered: 0, totalProfit: 0, games: {}, users: {} }
+        }
     });
 });
 
@@ -274,8 +303,11 @@ app.get('/', (req, res) => {
         <head>
             <title>Shuffle.com Bet Tracker</title>
             <style>
-                body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #eee; }
+                body { font-family: Arial, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #eee; }
                 h1 { color: #00ff00; }
+                .tabs { display: flex; gap: 10px; margin: 20px 0; }
+                .tab { background: #16213e; color: #00ff00; border: 2px solid #00ff00; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
+                .tab.active { background: #00ff00; color: #000; }
                 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }
                 .stat-card { background: #16213e; padding: 20px; border-radius: 8px; border: 2px solid #00ff00; }
                 .stat-card h2 { margin-top: 0; color: #00ff00; }
@@ -288,26 +320,38 @@ app.get('/', (req, res) => {
                 button:hover { background: #00cc00; }
                 .positive { color: #00ff00; }
                 .negative { color: #ff0000; }
+                .highlight { background: #2d3748; }
+                .filter { margin: 10px 0; }
+                input { padding: 8px; background: #16213e; color: #eee; border: 1px solid #00ff00; border-radius: 4px; }
             </style>
         </head>
         <body>
-            <h1>🎲 Shuffle.com Bet Tracker - TheGoobr</h1>
+            <h1>🎲 Shuffle.com Bet Tracker</h1>
+            
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('all')">All Bets</div>
+                <div class="tab" onclick="switchTab('thegoobr')">TheGoobr Only</div>
+            </div>
             
             <div>
                 <button onclick="sendStats('daily')">Send Daily Stats to Discord</button>
                 <button onclick="sendStats('weekly')">Send Weekly Stats to Discord</button>
                 <button onclick="sendStats('monthly')">Send Monthly Stats to Discord</button>
-                <button onclick="loadStats()">Refresh Stats</button>
+                <button onclick="loadData()">Refresh</button>
             </div>
             
             <div class="stats" id="stats"></div>
             
             <div class="bets">
-                <h2>Recent Bets</h2>
+                <h2>Recent Bets (<span id="betCount">0</span>)</h2>
+                <div class="filter">
+                    <input type="text" id="usernameFilter" placeholder="Filter by username..." onkeyup="filterBets()">
+                </div>
                 <table id="betsTable">
                     <thead>
                         <tr>
                             <th>Time</th>
+                            <th>Username</th>
                             <th>Game</th>
                             <th>Amount</th>
                             <th>Multiplier</th>
@@ -319,31 +363,47 @@ app.get('/', (req, res) => {
             </div>
             
             <script>
+                let currentTab = 'all';
+                let allBets = [];
+                
+                function switchTab(tab) {
+                    currentTab = tab;
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    event.target.classList.add('active');
+                    loadData();
+                }
+                
+                async function loadData() {
+                    await Promise.all([loadStats(), loadBets()]);
+                }
+                
                 async function loadStats() {
                     const res = await fetch('/api/stats/all');
                     const data = await res.json();
                     
+                    const statsData = data[currentTab];
+                    
                     const statsHtml = \`
                         <div class="stat-card">
                             <h2>📅 Daily Stats</h2>
-                            <div class="stat-item"><strong>Total Bets:</strong> \${data.daily.totalBets}</div>
-                            <div class="stat-item"><strong>Total Wagered:</strong> $\${data.daily.totalWagered.toFixed(2)}</div>
-                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${data.daily.totalProfit >= 0 ? 'positive' : 'negative'}">$\${data.daily.totalProfit.toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Games:</strong> \${Object.keys(data.daily.games).length}</div>
+                            <div class="stat-item"><strong>Total Bets:</strong> \${statsData.daily.totalBets}</div>
+                            <div class="stat-item"><strong>Total Wagered:</strong> $\${statsData.daily.totalWagered.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${statsData.daily.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.daily.totalProfit.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Unique Users:</strong> \${Object.keys(statsData.daily.users || {}).length}</div>
                         </div>
                         <div class="stat-card">
                             <h2>📊 Weekly Stats</h2>
-                            <div class="stat-item"><strong>Total Bets:</strong> \${data.weekly.totalBets}</div>
-                            <div class="stat-item"><strong>Total Wagered:</strong> $\${data.weekly.totalWagered.toFixed(2)}</div>
-                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${data.weekly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${data.weekly.totalProfit.toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Games:</strong> \${Object.keys(data.weekly.games).length}</div>
+                            <div class="stat-item"><strong>Total Bets:</strong> \${statsData.weekly.totalBets}</div>
+                            <div class="stat-item"><strong>Total Wagered:</strong> $\${statsData.weekly.totalWagered.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${statsData.weekly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.weekly.totalProfit.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Unique Users:</strong> \${Object.keys(statsData.weekly.users || {}).length}</div>
                         </div>
                         <div class="stat-card">
                             <h2>📈 Monthly Stats</h2>
-                            <div class="stat-item"><strong>Total Bets:</strong> \${data.monthly.totalBets}</div>
-                            <div class="stat-item"><strong>Total Wagered:</strong> $\${data.monthly.totalWagered.toFixed(2)}</div>
-                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${data.monthly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${data.monthly.totalProfit.toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Games:</strong> \${Object.keys(data.monthly.games).length}</div>
+                            <div class="stat-item"><strong>Total Bets:</strong> \${statsData.monthly.totalBets}</div>
+                            <div class="stat-item"><strong>Total Wagered:</strong> $\${statsData.monthly.totalWagered.toFixed(2)}</div>
+                            <div class="stat-item"><strong>Total Profit:</strong> <span class="\${statsData.monthly.totalProfit >= 0 ? 'positive' : 'negative'}">$\${statsData.monthly.totalProfit.toFixed(2)}</span></div>
+                            <div class="stat-item"><strong>Unique Users:</strong> \${Object.keys(statsData.monthly.users || {}).length}</div>
                         </div>
                     \`;
                     
@@ -351,12 +411,20 @@ app.get('/', (req, res) => {
                 }
                 
                 async function loadBets() {
-                    const res = await fetch('/api/bets?limit=20');
-                    const bets = await res.json();
+                    const url = currentTab === 'thegoobr' ? '/api/bets?username=TheGoobr&limit=100' : '/api/bets?limit=100';
+                    const res = await fetch(url);
+                    allBets = await res.json();
                     
-                    const rows = bets.map(bet => \`
-                        <tr>
+                    displayBets(allBets);
+                }
+                
+                function displayBets(betsToShow) {
+                    document.getElementById('betCount').textContent = betsToShow.length;
+                    
+                    const rows = betsToShow.map(bet => \`
+                        <tr class="\${bet.username === 'TheGoobr' ? 'highlight' : ''}">
                             <td>\${new Date(bet.timestamp).toLocaleString()}</td>
+                            <td><strong>\${bet.username}</strong></td>
                             <td>\${bet.game}</td>
                             <td>\${bet.amount}</td>
                             <td>\${bet.multiplier}</td>
@@ -364,33 +432,36 @@ app.get('/', (req, res) => {
                         </tr>
                     \`).join('');
                     
-                    document.getElementById('betsBody').innerHTML = rows || '<tr><td colspan="5">No bets yet</td></tr>';
+                    document.getElementById('betsBody').innerHTML = rows || '<tr><td colspan="6">No bets yet</td></tr>';
+                }
+                
+                function filterBets() {
+                    const filter = document.getElementById('usernameFilter').value.toLowerCase();
+                    if (!filter) {
+                        displayBets(allBets);
+                        return;
+                    }
+                    
+                    const filtered = allBets.filter(bet => bet.username.toLowerCase().includes(filter));
+                    displayBets(filtered);
                 }
                 
                 async function sendStats(period) {
-                    await fetch(\`/api/stats/\${period}/send\`, { method: 'POST' });
+                    await fetch(\`/api/stats/\${period}/send?category=\${currentTab}\`, { method: 'POST' });
                     alert(\`\${period.charAt(0).toUpperCase() + period.slice(1)} stats sent to Discord!\`);
                 }
                 
-                // Load initial data
-                loadStats();
-                loadBets();
-                
-                // Auto-refresh every 10 seconds
-                setInterval(() => {
-                    loadStats();
-                    loadBets();
-                }, 10000);
+                loadData();
+                setInterval(loadData, 10000);
             </script>
         </body>
         </html>
     `);
 });
 
-// Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`📊 Dashboard: http://localhost:${PORT}`);
-    console.log(`🎲 Tracking bets for: TheGoobr`);
+    console.log(`🎲 Tracking ALL bets, Discord notifications for: ${TARGET_USERNAME}`);
     console.log(`📨 Discord webhook configured: ${DISCORD_WEBHOOK_URL ? 'Yes' : 'No'}`);
 });
