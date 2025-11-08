@@ -16,7 +16,7 @@
 
     // Configuration
     const TARGET_USERNAME = 'TheGoobr';
-    const BACKEND_URL = 'YOUR_REPLIT_URL_HERE'; // Replace with your Replit URL
+    const BACKEND_URL = 'https://bd156f34-9fce-49b2-90d2-a044ad76fe9c-00-zuut6ynnxfx.sisko.replit.dev';
     const CHECK_INTERVAL = 2000; // Check every 2 seconds
     
     let processedBets = new Set();
