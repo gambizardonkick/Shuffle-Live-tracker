@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const SCAN_INTERVAL = 2000;
+const SCAN_INTERVAL = 500; // Scan every 500ms to catch all bets
 
 let browser = null;
 let page = null;
@@ -91,46 +91,48 @@ function convertToUSD(amount, currency) {
     return amount * price;
 }
 
-function createStableBetId(username, amount, game, multiplier, timestamp) {
-    return `${username}_${amount}_${game}_${multiplier}_${Math.floor(timestamp / 5000)}`;
+function createStableBetId(username, amount, game, multiplier, payout) {
+    // Create a stable ID based on bet data, not scrape time
+    // This prevents duplicates when same bet appears in multiple scrapes
+    return `${username}_${amount}_${game}_${multiplier}_${payout}`;
 }
 
 async function scrapeBets(onBetFound) {
     try {
-        let tableBody = await page.$('tbody[data-testid="table-body"]');
+        // Find all tables and get the one with 5+ columns
+        const allTables = await page.$$('table');
         
-        if (!tableBody) {
-            tableBody = await page.$('tbody');
+        let betTable = null;
+        for (const table of allTables) {
+            const tbody = await table.$('tbody');
+            if (tbody) {
+                const rows = await tbody.$$('tr');
+                if (rows.length > 0) {
+                    const cells = await rows[0].$$('td');
+                    if (cells.length >= 5) {
+                        betTable = tbody;
+                        break;
+                    }
+                }
+            }
         }
         
-        if (!tableBody) {
-            console.log('⚠️ No table body found');
+        if (!betTable) {
             return;
         }
 
-        let rows = await tableBody.$$('tr[aria-label="View detail"]');
+        const rows = await betTable.$$('tr');
         
         if (rows.length === 0) {
-            rows = await tableBody.$$('tr');
-            if (rows.length > 0) {
-                console.log(`📊 Found ${rows.length} rows (without aria-label)`);
-            } else {
-                console.log('⚠️ No rows found in table');
-                return;
-            }
-        } else {
-            console.log(`📊 Found ${rows.length} rows with aria-label`);
+            return;
         }
-
+        
         for (const row of rows) {
             try {
                 const cells = await row.$$('td');
                 if (cells.length < 5) {
-                    console.log(`⚠️ Row has only ${cells.length} cells, skipping`);
                     continue;
                 }
-                
-                console.log(`📝 Processing row with ${cells.length} cells`);
 
                 const userCell = cells[0];
                 const gameCell = cells[1];
@@ -141,16 +143,17 @@ async function scrapeBets(onBetFound) {
                 let username = 'Unknown';
                 const anonymousDiv = await userCell.$('.AnonymousUser_root__4chUx');
                 if (anonymousDiv) {
-                    const textSpan = await anonymousDiv.$('.AnonymousUser_text__0E_PM');
-                    if (textSpan) {
-                        username = await textSpan.evaluate(el => el.textContent.trim());
-                    } else {
-                        username = 'Hidden';
-                    }
+                    username = 'Hidden';
                 } else {
-                    const userLink = await userCell.$('a[href*="/user/"]');
-                    if (userLink) {
-                        username = await userLink.evaluate(el => el.textContent.trim() || el.getAttribute('href').replace('/user/', ''));
+                    const userButton = await userCell.$('button');
+                    if (userButton) {
+                        username = await userButton.evaluate(el => {
+                            // Remove VIP badge if present
+                            const clone = el.cloneNode(true);
+                            const badge = clone.querySelector('.VipBadge_root__ozOvC');
+                            if (badge) badge.remove();
+                            return clone.textContent.trim();
+                        });
                     }
                 }
 
@@ -167,7 +170,7 @@ async function scrapeBets(onBetFound) {
                     currency = parseCurrency(imgSrc);
                 }
 
-                const amountSpan = await amountCell.$('.FiatWithTooltip_evenlySpacedNumber__wQSLB, .fiat-with-tool-tip-text');
+                const amountSpan = await amountCell.$('.FormattedAmount_evenlySpacedNumber__hmNwm');
                 let betAmountText = '';
                 let betAmount = 0;
                 if (amountSpan) {
@@ -190,7 +193,7 @@ async function scrapeBets(onBetFound) {
                     payoutCurrency = parseCurrency(imgSrc);
                 }
 
-                const payoutSpan = await payoutCell.$('.FiatWithTooltip_evenlySpacedNumber__wQSLB, .fiat-with-tool-tip-text');
+                const payoutSpan = await payoutCell.$('.FormattedAmount_evenlySpacedNumber__hmNwm');
                 let payoutText = '';
                 let payout = 0;
                 if (payoutSpan) {
@@ -203,7 +206,7 @@ async function scrapeBets(onBetFound) {
                 const isWin = payout > 0;
 
                 const timestamp = Date.now();
-                const betId = createStableBetId(username, betAmount, game, multiplier, timestamp);
+                const betId = createStableBetId(username, betAmount, game, multiplier, payout);
 
                 if (!processedBets.has(betId)) {
                     processedBets.add(betId);
@@ -225,9 +228,14 @@ async function scrapeBets(onBetFound) {
                         timestamp,
                         url: SHUFFLE_URL
                     };
-
-                    if (onBetFound) {
-                        onBetFound(betData);
+                    
+                    // Skip logging and processing Hidden users (per user request)
+                    if (username !== 'Hidden') {
+                        console.log(`✅ ${username} | ${game} | ${betAmountText} ${currency} ($${betAmountUSD.toFixed(2)}) | ${multiplierText} | Payout: ${payoutText} ${payoutCurrency} ($${payoutUSD.toFixed(2)})`);
+                        
+                        if (onBetFound) {
+                            onBetFound(betData);
+                        }
                     }
 
                     if (processedBets.size > 5000) {
@@ -280,34 +288,93 @@ async function startScraper(onBetFound) {
         console.log('⏳ Waiting for page to fully load...');
         await new Promise(resolve => setTimeout(resolve, 8000));
         
-        console.log('📜 Scrolling down progressively...');
-        for (let i = 0; i < 5; i++) {
-            await page.evaluate((i) => {
-                window.scrollTo(0, (document.body.scrollHeight / 5) * (i + 1));
-            }, i);
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        console.log('📜 Scrolling main content area down...');
+        
+        // Scroll progressively with delays to trigger lazy loading
+        for (let step = 1; step <= 5; step++) {
+            const scrollResult = await page.evaluate((step) => {
+                const mainContent = document.querySelector('#pageContent') || 
+                                   document.querySelector('.CasinoLayout_mainContent__fyA1x') ||
+                                   document.querySelector('[class*="CasinoLayout_mainContent"]');
+                
+                if (mainContent) {
+                    const scrollHeight = mainContent.scrollHeight;
+                    mainContent.scrollTop = (scrollHeight / 5) * step;
+                    return { 
+                        success: true, 
+                        scrollTop: mainContent.scrollTop,
+                        scrollHeight,
+                        step
+                    };
+                }
+                return { success: false, step };
+            }, step);
+            
+            console.log(`📜 Scroll step ${step}/5:`, JSON.stringify(scrollResult));
+            await new Promise(resolve => setTimeout(resolve, 1500));
         }
         
-        console.log('⏬ Final scroll to bottom...');
-        await page.evaluate(() => {
-            window.scrollTo(0, document.body.scrollHeight);
+        console.log('⏬ Scroll complete, waiting for content to load...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        console.log('🔍 Looking for Live Bets section...');
+        
+        // Debug: Check all tables on page
+        const tableInfo = await page.evaluate(() => {
+            const allTables = document.querySelectorAll('table');
+            const info = [];
+            allTables.forEach((table, idx) => {
+                const rows = table.querySelectorAll('tbody tr');
+                if (rows.length > 0) {
+                    const firstRow = rows[0];
+                    const cells = firstRow.querySelectorAll('td');
+                    info.push({
+                        index: idx,
+                        rowCount: rows.length,
+                        columnCount: cells.length
+                    });
+                }
+            });
+            return info;
         });
         
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        console.log('📋 Tables found on page:', JSON.stringify(tableInfo, null, 2));
         
-        console.log('🔍 Looking for bet table...');
-        const tableExists = await page.$('tbody[data-testid="table-body"]');
+        // Wait for and find the live bets table
+        const liveBetsFound = tableInfo.some(t => t.columnCount >= 5);
         
-        if (!tableExists) {
-            console.log('⚠️ Table not found, trying alternative selectors...');
-            const altTable = await page.$('tbody');
-            if (altTable) {
-                console.log('✅ Found alternative table element');
+        if (!liveBetsFound) {
+            console.log('⚠️ Live bets table not found - waiting longer for it to load...');
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            
+            // Check again
+            const tableInfo2 = await page.evaluate(() => {
+                const allTables = document.querySelectorAll('table');
+                const info = [];
+                allTables.forEach((table, idx) => {
+                    const rows = table.querySelectorAll('tbody tr');
+                    if (rows.length > 0) {
+                        const firstRow = rows[0];
+                        const cells = firstRow.querySelectorAll('td');
+                        info.push({
+                            index: idx,
+                            rowCount: rows.length,
+                            columnCount: cells.length
+                        });
+                    }
+                });
+                return info;
+            });
+            
+            console.log('📋 Tables found after waiting:', JSON.stringify(tableInfo2, null, 2));
+            
+            if (!tableInfo2.some(t => t.columnCount >= 5)) {
+                console.log('⚠️ Still no live bets table found');
             } else {
-                throw new Error('No bet table found on page');
+                console.log('✅ Found Live Bets table after waiting!');
             }
         } else {
-            console.log('✅ Found bet table!');
+            console.log('✅ Found Live Bets table!');
         }
         
         console.log('✅ Connected to shuffle.com');

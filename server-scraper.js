@@ -174,8 +174,6 @@ async function sendToDiscord(bet) {
 }
 
 function handleBet(betData) {
-    console.log(`✅ Bet: ${betData.username} | ${betData.game} | ${betData.betAmountText} ${betData.currency} ($${betData.betAmountUSD.toFixed(2)})`);
-    
     bets.push(betData);
     
     if (bets.length > 10000) {
