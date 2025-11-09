@@ -370,8 +370,32 @@ async function startScraper(onBetFound) {
             console.log('⚠️ Error changing row limit:', err.message);
         }
         
+        // Click on High Rollers tab
+        console.log('🎰 Clicking High Rollers tab...');
+        try {
+            const highRollerClicked = await page.evaluate(() => {
+                const highRollerButton = document.querySelector('button[data-testid="high-roller-bets"]') ||
+                                        document.querySelector('button#high-roller-bets') ||
+                                        document.querySelector('button.TabView_tab__yrvwe');
+                if (highRollerButton) {
+                    highRollerButton.click();
+                    return true;
+                }
+                return false;
+            });
+            
+            if (highRollerClicked) {
+                console.log('✅ High Rollers tab clicked');
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            } else {
+                console.log('⚠️ High Rollers tab not found');
+            }
+        } catch (err) {
+            console.log('⚠️ Error clicking High Rollers tab:', err.message);
+        }
+        
         console.log('✅ Connected to shuffle.com');
-        console.log('👀 Monitoring bets...');
+        console.log('👀 Monitoring High Roller bets...');
 
         setInterval(async () => {
             await scrapeBets(onBetFound);
