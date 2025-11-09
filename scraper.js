@@ -2,12 +2,11 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const SCAN_INTERVAL = 2000; // Scan every 2 seconds to process 50-row chunks efficiently
 
 let browser = null;
 let page = null;
 let isRunning = false;
-let processedBets = new Set();
+let processedBets = new Set(); // Track by actual bet ID from API
 
 const cryptoPrices = {
     BTC: 0,
