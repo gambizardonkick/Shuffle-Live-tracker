@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.replit
+replit.nix
+.config
+attached_assets
+generated-icon.png

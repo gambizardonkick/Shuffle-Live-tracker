@@ -66,7 +66,7 @@ Fill in the following settings:
 
 **Build Settings:**
 - **Build Command**: `npm install`
-- **Start Command**: `node server-scraper.js`
+- **Start Command**: `npm start`
 
 **Instance Type:**
 - **Free** (or choose paid plan for better performance)
@@ -115,27 +115,15 @@ For production use, consider:
 - Better performance
 
 ### Chromium/Puppeteer on Render
-The scraper uses Puppeteer which requires Chromium. Render should handle this, but you may need to:
+✅ **Automatically handled!** The project is configured to:
+- Download Chromium automatically during `npm install` (via postinstall script)
+- Detect if running on Replit or Render and use the correct Chrome path
+- No manual configuration needed!
 
-1. Add a `render.yaml` file (optional):
-```yaml
-services:
-  - type: web
-    name: shuffle-bet-tracker
-    env: node
-    buildCommand: npm install
-    startCommand: node server-scraper.js
-    envVars:
-      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
-        value: true
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /usr/bin/chromium-browser
-```
-
-2. Or install Chromium in build command:
-```bash
-npm install && apt-get update && apt-get install -y chromium-browser
-```
+**How it works:**
+- On Replit: Uses Replit's built-in Chromium
+- On Render: Puppeteer downloads and installs its own Chromium (~170MB)
+- First deployment takes a bit longer due to Chromium download
 
 ### Monitor Your Deployment
 - Check logs in Render dashboard
