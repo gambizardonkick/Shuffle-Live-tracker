@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const SCAN_INTERVAL = 2000; // Scan every 2 seconds to process 50-row chunks efficiently
+const SCAN_INTERVAL = 500; // Scan every 0.5 seconds for 100% data capture
 
 let browser = null;
 let page = null;
