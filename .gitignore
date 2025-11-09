@@ -131,3 +131,10 @@ dist
 
 # Replit debugger
 .breakpoints
+
+# Replit specific files
+.config/
+.replit
+replit.nix
+generated-icon.png
+attached_assets/
