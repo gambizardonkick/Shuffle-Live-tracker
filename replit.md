@@ -1,8 +1,8 @@
 # Overview
 
-This is a real-time bet tracking system for shuffle.com that monitors bets from a specific user ("TheGoobr") and sends notifications to Discord. The system consists of two main components: a browser-based Tampermonkey userscript that captures bet data from the shuffle.com website, and a Node.js/Express backend server that processes the data, maintains statistics, and sends Discord notifications.
+This is a server-side automated bet tracking system for shuffle.com that scrapes ALL live bets using Puppeteer, converts bet amounts from various cryptocurrencies to USD, tracks comprehensive statistics (daily/weekly/monthly/lifetime profits and losses per user), and provides a password-protected admin panel to manage tracked users with individual Discord webhooks.
 
-The application tracks betting activity in real-time, aggregates statistics across different time periods (daily, weekly, monthly), and provides a web dashboard for viewing bet history and statistics.
+The application tracks betting activity in real-time, aggregates statistics across different time periods (daily, weekly, monthly, lifetime), provides a web dashboard for viewing bet history and statistics, and sends comprehensive Discord notifications for tracked users.
 
 # User Preferences
 
@@ -47,19 +47,28 @@ Preferred communication style: Simple, everyday language.
 - Biweekly period calculation for affiliate reporting (anchored to specific UTC date)
 
 **Authentication**
-- Simple token-based authentication using `X-Auth-Token` header
-- Static token: `shuffle-tracker-2024`
-- Problem: Need to secure API endpoints from unauthorized access
-- Rationale: Simple token sufficient for single-user application on Replit
-- Consideration: Could be upgraded to environment variable or JWT for production
+- Password-protected admin panel for managing tracked users
+- Password stored in environment variable `ADMIN_PASSWORD` (defaults to "admin123")
+- Admin endpoints require password verification via `/api/admin/verify`
+- Problem: Need to secure admin panel from unauthorized access
+- Rationale: Simple password-based auth sufficient for admin operations
+- Frontend maintains authenticated state after successful login
 
 ## External Dependencies
 
 **Discord Integration**
-- Discord Webhook URL stored in environment variable `DISCORD_WEBHOOK_URL`
-- Sends formatted notifications for each bet with statistics
+- Each tracked user has their own Discord webhook URL configured via admin panel
+- Sends comprehensive notifications for each bet including:
+  - Bet details (game, amount, multiplier, payout)
+  - Daily stats (bets, win rate, profit)
+  - Weekly stats (bets, win rate, profit)
+  - Monthly stats (bets, win rate, profit)
+  - Lifetime stats (total bets, total wagered, total profit)
 - Uses axios for HTTP requests to Discord API
-- Provides manual and automatic notification triggers
+- Webhook URLs stored per-user in trackedUsers Map
+- Stats are updated BEFORE sending to Discord to ensure current bet is included
+- Problem solved: Each user can have notifications sent to different Discord channels
+- Rationale: Prevents mixing different users' bets in the same Discord channel
 
 **Affiliate Service API**
 - Base URL: `https://api.your-affiliate-service.com`

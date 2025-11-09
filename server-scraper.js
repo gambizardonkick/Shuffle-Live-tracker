@@ -10,11 +10,12 @@ app.use(cors());
 app.use(express.json());
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-const TARGET_USERNAME = 'TheGoobr';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 const bets = [];
 const userStats = {};
-const trackedUsers = new Set(['TheGoobr']); // Users to track permanently
+const trackedUsers = new Map(); // Users to track permanently with their webhook URLs
+trackedUsers.set('TheGoobr', { webhookUrl: DISCORD_WEBHOOK_URL }); // Default user
 const trackedUserBets = {}; // Permanent storage for tracked users' bets
 const serverStartTime = new Date();
 
@@ -130,49 +131,72 @@ function updateUserStats(bet) {
     });
 }
 
-async function sendToDiscord(bet) {
-    if (!DISCORD_WEBHOOK_URL) return;
+async function sendToDiscord(bet, webhookUrl) {
+    if (!webhookUrl) return;
     
     const color = bet.isWin ? 0x00ff00 : 0xff0000;
+    const username = bet.username;
+    
+    // Get user stats
+    const now = new Date();
+    const stats = userStats[username] || {
+        totalBets: 0,
+        totalWageredUSD: 0,
+        totalProfitUSD: 0,
+        daily: {},
+        weekly: {},
+        monthly: {}
+    };
+    
+    const dayKey = getDateKey(now);
+    const weekKey = getWeekKey(now);
+    const monthKey = getMonthKey(now);
+    
+    const dailyStats = stats.daily[dayKey] || initPeriodStats();
+    const weeklyStats = stats.weekly[weekKey] || initPeriodStats();
+    const monthlyStats = stats.monthly[monthKey] || initPeriodStats();
     
     const embed = {
-        title: `🎲 ${bet.isWin ? '✅ WIN' : '❌ LOSS'} - ${bet.username}`,
+        title: `🎲 ${bet.isWin ? '✅ WIN' : '❌ LOSS'} - ${username}`,
         color: color,
         fields: [
             {
-                name: 'Game',
-                value: bet.game || 'Unknown',
+                name: '💰 This Bet',
+                value: `**Game:** ${bet.game || 'Unknown'}\n**Bet:** ${bet.betAmountText} ${bet.currency} ($${bet.betAmountUSD.toFixed(2)})\n**Multiplier:** ${bet.multiplierText}\n**Payout:** ${bet.payoutText} ${bet.currency} ($${bet.payoutUSD.toFixed(2)})`,
+                inline: false
+            },
+            {
+                name: '📊 Today',
+                value: `**Bets:** ${dailyStats.totalBets}\n**Win Rate:** ${dailyStats.winRate.toFixed(1)}%\n**Profit:** $${dailyStats.totalProfitUSD.toFixed(2)}`,
                 inline: true
             },
             {
-                name: 'Bet Amount',
-                value: `${bet.betAmountText} ${bet.currency}\n($${bet.betAmountUSD.toFixed(2)} USD)`,
+                name: '📅 This Week',
+                value: `**Bets:** ${weeklyStats.totalBets}\n**Win Rate:** ${weeklyStats.winRate.toFixed(1)}%\n**Profit:** $${weeklyStats.totalProfitUSD.toFixed(2)}`,
                 inline: true
             },
             {
-                name: 'Multiplier',
-                value: bet.multiplierText || 'Unknown',
+                name: '📆 This Month',
+                value: `**Bets:** ${monthlyStats.totalBets}\n**Win Rate:** ${monthlyStats.winRate.toFixed(1)}%\n**Profit:** $${monthlyStats.totalProfitUSD.toFixed(2)}`,
                 inline: true
             },
             {
-                name: 'Payout',
-                value: `${bet.payoutText} ${bet.currency}\n($${bet.payoutUSD.toFixed(2)} USD)`,
-                inline: true
-            },
-            {
-                name: 'Time',
-                value: new Date(bet.timestamp).toLocaleString(),
+                name: '🏆 Lifetime Stats',
+                value: `**Total Bets:** ${stats.totalBets}\n**Total Wagered:** $${stats.totalWageredUSD.toFixed(2)}\n**Total Profit:** $${stats.totalProfitUSD.toFixed(2)}`,
                 inline: false
             }
         ],
-        timestamp: new Date(bet.timestamp).toISOString()
+        timestamp: new Date(bet.timestamp).toISOString(),
+        footer: {
+            text: `Tracked since server start`
+        }
     };
     
     try {
-        await axios.post(DISCORD_WEBHOOK_URL, { embeds: [embed] });
-        console.log(`✅ Sent ${bet.username} bet to Discord`);
+        await axios.post(webhookUrl, { embeds: [embed] });
+        console.log(`✅ Sent ${username} bet to Discord with stats`);
     } catch (error) {
-        console.error('Error sending to Discord:', error.message);
+        console.error(`Error sending ${username} to Discord:`, error.message);
     }
 }
 
@@ -185,6 +209,9 @@ function handleBet(betData) {
         bets.splice(0, 50000);
     }
     
+    // Update stats FIRST before sending to Discord
+    updateUserStats(betData);
+    
     // Store tracked users' bets permanently (never delete)
     if (trackedUsers.has(betData.username)) {
         if (!trackedUserBets[betData.username]) {
@@ -192,11 +219,12 @@ function handleBet(betData) {
         }
         trackedUserBets[betData.username].push(betData);
         
-        // Send to Discord for tracked users
-        sendToDiscord(betData);
+        // Send to Discord using user's specific webhook URL (stats now include this bet)
+        const userConfig = trackedUsers.get(betData.username);
+        if (userConfig && userConfig.webhookUrl) {
+            sendToDiscord(betData, userConfig.webhookUrl);
+        }
     }
-    
-    updateUserStats(betData);
 }
 
 app.get('/api/bets', (req, res) => {
@@ -252,24 +280,43 @@ app.get('/api/prices', (req, res) => {
     res.json(getCryptoPrices());
 });
 
+// Admin password verification
+app.post('/api/admin/verify', (req, res) => {
+    const { password } = req.body;
+    if (password === ADMIN_PASSWORD) {
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ success: false, message: 'Invalid password' });
+    }
+});
+
 // Tracked users management
 app.get('/api/tracked-users', (req, res) => {
-    const users = Array.from(trackedUsers).map(username => ({
+    const users = Array.from(trackedUsers.entries()).map(([username, config]) => ({
         username,
         totalBets: trackedUserBets[username]?.length || 0,
-        lifetimeStats: userStats[username] || {},
+        webhookUrl: config.webhookUrl ? '***' + config.webhookUrl.slice(-10) : 'Not set',
         trackingSince: serverStartTime.toISOString()
     }));
     res.json(users);
 });
 
 app.post('/api/tracked-users', (req, res) => {
-    const { username } = req.body;
+    const { username, webhookUrl, password } = req.body;
+    
+    if (password !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Invalid password' });
+    }
+    
     if (!username) {
         return res.status(400).json({ error: 'Username required' });
     }
     
-    trackedUsers.add(username);
+    if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+        return res.status(400).json({ error: 'Valid Discord webhook URL required' });
+    }
+    
+    trackedUsers.set(username, { webhookUrl });
     if (!trackedUserBets[username]) {
         trackedUserBets[username] = [];
     }
@@ -279,6 +326,12 @@ app.post('/api/tracked-users', (req, res) => {
 
 app.delete('/api/tracked-users/:username', (req, res) => {
     const { username } = req.params;
+    const { password } = req.body;
+    
+    if (password !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Invalid password' });
+    }
+    
     trackedUsers.delete(username);
     res.json({ success: true, username, message: `${username} removed from tracked users` });
 });
@@ -404,26 +457,39 @@ app.get('/', (req, res) => {
                 </div>
                 
                 <div id="adminTab" style="display:none;">
-                    <h2>⚙️ Admin Panel - Manage Tracked Users</h2>
-                    <div class="stat-card" style="margin-bottom: 20px;">
-                        <h3>Add New User to Track</h3>
-                        <input type="text" id="newUsername" placeholder="Enter username to track...">
-                        <button onclick="addTrackedUser()">Add User</button>
-                        <p style="color: #888; margin-top: 10px;">Tracked users' bets are stored permanently and never deleted. Each gets their own tab.</p>
+                    <div id="adminLogin" style="display:block;">
+                        <div class="stat-card" style="max-width: 500px; margin: 100px auto;">
+                            <h2>🔒 Admin Panel - Password Required</h2>
+                            <p style="color: #888; margin: 15px 0;">Enter admin password to manage tracked users</p>
+                            <input type="password" id="adminPassword" placeholder="Enter admin password..." style="width: 100%;">
+                            <button onclick="verifyPassword()">Login</button>
+                        </div>
                     </div>
                     
-                    <h3>Currently Tracked Users</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Username</th>
-                                <th>Total Lifetime Bets</th>
-                                <th>Tracking Since</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="trackedUsersBody"></tbody>
-                    </table>
+                    <div id="adminPanel" style="display:none;">
+                        <h2>⚙️ Admin Panel - Manage Tracked Users</h2>
+                        <div class="stat-card" style="margin-bottom: 20px;">
+                            <h3>Add New User to Track</h3>
+                            <input type="text" id="newUsername" placeholder="Enter username to track..." style="width: 100%; margin-bottom: 10px;">
+                            <input type="text" id="newWebhookUrl" placeholder="Discord Webhook URL (https://discord.com/api/webhooks/...)" style="width: 100%; margin-bottom: 10px;">
+                            <button onclick="addTrackedUser()">Add User</button>
+                            <p style="color: #888; margin-top: 10px;">⚠️ Each user sends bets to their own Discord webhook channel. Bets are stored permanently and never deleted.</p>
+                        </div>
+                        
+                        <h3>Currently Tracked Users</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Total Lifetime Bets</th>
+                                    <th>Webhook URL</th>
+                                    <th>Tracking Since</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trackedUsersBody"></tbody>
+                        </table>
+                    </div>
                 </div>
                 
                 <div id="trackedUserTabs"></div>
@@ -433,6 +499,29 @@ app.get('/', (req, res) => {
                 let currentTab = 'recent';
                 let allBets = [];
                 let trackedUsers = [];
+                let adminPassword = null;
+                let isAdminAuthenticated = false;
+                
+                async function verifyPassword() {
+                    const password = document.getElementById('adminPassword').value;
+                    const res = await fetch('/api/admin/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password })
+                    });
+                    
+                    const result = await res.json();
+                    if (result.success) {
+                        adminPassword = password;
+                        isAdminAuthenticated = true;
+                        document.getElementById('adminLogin').style.display = 'none';
+                        document.getElementById('adminPanel').style.display = 'block';
+                        await loadTrackedUsers();
+                    } else {
+                        alert('Invalid password! Try again.');
+                        document.getElementById('adminPassword').value = '';
+                    }
+                }
                 
                 function switchTab(tab) {
                     currentTab = tab;
@@ -450,7 +539,16 @@ app.get('/', (req, res) => {
                     if (tab === 'recent') document.getElementById('recentTab').style.display = 'block';
                     else if (tab === 'users') document.getElementById('usersTab').style.display = 'block';
                     else if (tab === 'thegoobr') document.getElementById('thegoobrTab').style.display = 'block';
-                    else if (tab === 'admin') document.getElementById('adminTab').style.display = 'block';
+                    else if (tab === 'admin') {
+                        document.getElementById('adminTab').style.display = 'block';
+                        if (!isAdminAuthenticated) {
+                            document.getElementById('adminLogin').style.display = 'block';
+                            document.getElementById('adminPanel').style.display = 'none';
+                        } else {
+                            document.getElementById('adminLogin').style.display = 'none';
+                            document.getElementById('adminPanel').style.display = 'block';
+                        }
+                    }
                     else {
                         const userTab = document.getElementById(\`user-\${tab}\`);
                         if (userTab) userTab.style.display = 'block';
@@ -631,11 +729,12 @@ app.get('/', (req, res) => {
                         <tr>
                             <td><strong>\${user.username}</strong></td>
                             <td>\${user.totalBets}</td>
+                            <td style="font-family: monospace; font-size: 11px;">\${user.webhookUrl}</td>
                             <td>\${new Date(user.trackingSince).toLocaleString()}</td>
                             <td><button onclick="removeTrackedUser('\${user.username}')">Remove</button></td>
                         </tr>
                     \`).join('');
-                    document.getElementById('trackedUsersBody').innerHTML = adminRows || '<tr><td colspan="4">No tracked users yet</td></tr>';
+                    document.getElementById('trackedUsersBody').innerHTML = adminRows || '<tr><td colspan="5">No tracked users yet</td></tr>';
                 }
                 
                 async function loadTrackedUserData(username) {
@@ -690,21 +789,38 @@ app.get('/', (req, res) => {
                 
                 async function addTrackedUser() {
                     const username = document.getElementById('newUsername').value.trim();
+                    const webhookUrl = document.getElementById('newWebhookUrl').value.trim();
+                    
                     if (!username) {
                         alert('Please enter a username');
+                        return;
+                    }
+                    
+                    if (!webhookUrl) {
+                        alert('Please enter a Discord webhook URL');
+                        return;
+                    }
+                    
+                    if (!webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+                        alert('Please enter a valid Discord webhook URL (must start with https://discord.com/api/webhooks/)');
                         return;
                     }
                     
                     const res = await fetch('/api/tracked-users', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username })
+                        body: JSON.stringify({ username, webhookUrl, password: adminPassword })
                     });
                     
                     const result = await res.json();
-                    alert(result.message);
-                    document.getElementById('newUsername').value = '';
-                    await loadTrackedUsers();
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else {
+                        alert(result.message);
+                        document.getElementById('newUsername').value = '';
+                        document.getElementById('newWebhookUrl').value = '';
+                        await loadTrackedUsers();
+                    }
                 }
                 
                 async function removeTrackedUser(username) {
@@ -712,10 +828,19 @@ app.get('/', (req, res) => {
                         return;
                     }
                     
-                    const res = await fetch(\`/api/tracked-users/\${username}\`, { method: 'DELETE' });
+                    const res = await fetch(\`/api/tracked-users/\${username}\`, {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: adminPassword })
+                    });
+                    
                     const result = await res.json();
-                    alert(result.message);
-                    await loadTrackedUsers();
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else {
+                        alert(result.message);
+                        await loadTrackedUsers();
+                    }
                 }
                 
                 async function loadData() {
