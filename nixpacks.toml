@@ -1,0 +1,6 @@
+# nixpacks.toml
+
+[phases.base]
+aptPkgs = [
+  "chromium"
+]

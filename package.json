@@ -6,8 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server-scraper.js",
-    "dev": "node server-scraper.js",
-    "postinstall": "npx puppeteer browsers install chrome"
+    "dev": "node server-scraper.js"
   },
   "keywords": [],
   "author": "",
