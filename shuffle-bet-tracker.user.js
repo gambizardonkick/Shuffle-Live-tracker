@@ -58,7 +58,7 @@
         return isNaN(value) ? 0 : value;
     }
 
-    function createStableBetId(rowElement, username, amount, game, multiplier) {
+    function createStableBetId(rowElement, username, amount, game, multiplier, timestamp) {
         const textContent = rowElement.textContent.substring(0, 150);
         let hash = 0;
         for (let i = 0; i < textContent.length; i++) {
@@ -66,7 +66,7 @@
             hash = ((hash << 5) - hash) + char;
             hash = hash & hash;
         }
-        return `bet_${Math.abs(hash).toString(36)}_${username}_${amount}_${game}_${multiplier}`;
+        return `bet_${Math.abs(hash).toString(36)}_${username}_${amount}_${game}_${multiplier}_${timestamp}`;
     }
 
     function parseBetRow(rowElement) {
@@ -127,8 +127,9 @@
 
             const profit = payout;
             const isWin = payout > 0;
+            const timestamp = Date.now();
 
-            const betId = createStableBetId(rowElement, username, betAmount, game, multiplier);
+            const betId = createStableBetId(rowElement, username, betAmount, game, multiplier, timestamp);
 
             return {
                 betId,
@@ -142,7 +143,7 @@
                 payoutText,
                 profit,
                 isWin,
-                timestamp: Date.now(),
+                timestamp,
                 url: window.location.href
             };
         } catch (error) {

@@ -387,7 +387,7 @@ async function processQueuedBets(onBetFound) {
             const payoutUSD = convertToUSD(payout, rawBet.currency);
             const isWin = payout > 0;
             
-            const betId = createStableBetId(rawBet.username, betAmount, rawBet.game, multiplier, payout);
+            const betId = createStableBetId(rawBet.username, betAmount, rawBet.game, multiplier, payout, rawBet.timestamp);
             
             if (!processedBets.has(betId)) {
                 processedBets.add(betId);
