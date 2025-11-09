@@ -163,12 +163,6 @@ async function sendToDiscord(bet, webhookUrl) {
         return `${sign}$${val.toFixed(2)}`;
     };
     
-    // For losses, show the actual loss amount (positive number)
-    // For wins, show the total payout
-    const displayPayoutUSD = isWin ? bet.payoutUSD : Math.abs(profitLoss);
-    const displayPayoutText = isWin ? bet.payoutText : (Math.abs(profitLoss) / getCryptoPrices()[bet.currency]).toFixed(8);
-    const payoutLabel = isWin ? 'Payout:' : 'Loss Amount:';
-    
     const embed = {
         author: {
             name: `${username} • Bet Notification`,
@@ -185,10 +179,10 @@ async function sendToDiscord(bet, webhookUrl) {
                     `Bet:        ${bet.betAmountText} ${bet.currency}`,
                     `USD Value:  $${bet.betAmountUSD.toFixed(2)}`,
                     `Multiplier: ${bet.multiplierText}`,
-                    `${payoutLabel} ${displayPayoutText} ${bet.currency}`,
-                    `USD Value:  $${displayPayoutUSD.toFixed(2)}`,
+                    `Payout:     ${bet.payoutText} ${bet.currency}`,
+                    `USD Value:  $${bet.payoutUSD.toFixed(2)}`,
                     `───────────────────────────`,
-                    `Net ${isWin ? 'Profit' : 'Loss'}:  ${formatProfit(profitLoss)}`,
+                    `Profit:     ${formatProfit(profitLoss)}`,
                     `\`\`\``
                 ].join('\n'),
                 inline: false
