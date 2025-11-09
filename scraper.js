@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const SCAN_INTERVAL = 500; // Scan every 500ms to catch all bets
+const SCAN_INTERVAL = 50; // Scan every 50ms (20x per second) to catch all bets before they scroll off
 
 let browser = null;
 let page = null;
