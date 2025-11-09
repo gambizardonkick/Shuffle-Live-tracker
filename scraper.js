@@ -2,12 +2,13 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const SCAN_INTERVAL = 500; // Scan every 0.5 seconds for 100% data capture
+const SCAN_INTERVAL = 5000; // Scan every 5 seconds and compare snapshots - optimal for system stability
 
 let browser = null;
 let page = null;
 let isRunning = false;
 let processedBets = new Set();
+let previousSnapshot = new Set(); // Store previous scan's bet IDs
 
 const cryptoPrices = {
     BTC: 0,
@@ -97,7 +98,9 @@ function createStableBetId(username, amount, game, multiplier, payout) {
     return `${username}_${amount}_${game}_${multiplier}_${payout}`;
 }
 
-async function scrapeBets(onBetFound) {
+async function scrapeBets() {
+    const currentBets = [];
+    
     try {
         // Find all tables and get the one with 5+ columns
         const allTables = await page.$$('table');
@@ -118,13 +121,13 @@ async function scrapeBets(onBetFound) {
         }
         
         if (!betTable) {
-            return;
+            return currentBets;
         }
 
         const rows = await betTable.$$('tr');
         
         if (rows.length === 0) {
-            return;
+            return currentBets;
         }
         
         for (const row of rows) {
@@ -208,45 +211,73 @@ async function scrapeBets(onBetFound) {
                 const timestamp = Date.now();
                 const betId = createStableBetId(username, betAmount, game, multiplier, payout);
 
-                if (!processedBets.has(betId)) {
-                    processedBets.add(betId);
-
-                    const betData = {
-                        betId,
-                        username,
-                        game,
-                        currency,
-                        betAmount,
-                        betAmountText,
-                        betAmountUSD,
-                        multiplier,
-                        multiplierText,
-                        payout,
-                        payoutText,
-                        payoutUSD,
-                        isWin,
-                        timestamp,
-                        url: SHUFFLE_URL
-                    };
-                    
-                    // Log all bets including Hidden (all Hidden users tracked as single person)
-                    console.log(`✅ ${username} | ${game} | ${betAmountText} ${currency} ($${betAmountUSD.toFixed(2)}) | ${multiplierText} | Payout: ${payoutText} ${payoutCurrency} ($${payoutUSD.toFixed(2)})`);
-                    
-                    if (onBetFound) {
-                        onBetFound(betData);
-                    }
-
-                    if (processedBets.size > 5000) {
-                        const toDelete = Array.from(processedBets).slice(0, 2000);
-                        toDelete.forEach(id => processedBets.delete(id));
-                    }
-                }
+                const betData = {
+                    betId,
+                    username,
+                    game,
+                    currency,
+                    betAmount,
+                    betAmountText,
+                    betAmountUSD,
+                    multiplier,
+                    multiplierText,
+                    payout,
+                    payoutText,
+                    payoutUSD,
+                    isWin,
+                    timestamp,
+                    url: SHUFFLE_URL
+                };
+                
+                currentBets.push(betData);
+                
             } catch (err) {
                 console.error('Error parsing bet row:', err.message);
             }
         }
     } catch (error) {
         console.error('Error scraping bets:', error.message);
+    }
+    
+    return currentBets;
+}
+
+async function scanAndCompare(onBetFound) {
+    try {
+        // Scan page and get all current bets
+        const currentBets = await scrapeBets();
+        const currentSnapshot = new Set(currentBets.map(bet => bet.betId));
+        
+        // Find NEW bets (in current but not in previous)
+        const newBets = currentBets.filter(bet => !previousSnapshot.has(bet.betId));
+        
+        // Report only NEW bets
+        for (const bet of newBets) {
+            if (!processedBets.has(bet.betId)) {
+                processedBets.add(bet.betId);
+                
+                console.log(`✅ ${bet.username} | ${bet.game} | ${bet.betAmountText} ${bet.currency} ($${bet.betAmountUSD.toFixed(2)}) | ${bet.multiplierText} | Payout: ${bet.payoutText} ($${bet.payoutUSD.toFixed(2)})`);
+                
+                if (onBetFound) {
+                    onBetFound(bet);
+                }
+                
+                if (processedBets.size > 5000) {
+                    const toDelete = Array.from(processedBets).slice(0, 2000);
+                    toDelete.forEach(id => processedBets.delete(id));
+                }
+            }
+        }
+        
+        // Update snapshot for next comparison
+        previousSnapshot = currentSnapshot;
+        
+        if (newBets.length > 0) {
+            console.log(`📊 Snapshot comparison: ${newBets.length} new bets found (Total visible: ${currentBets.length})`);
+        }
+        
+    } catch (error) {
+        console.error('Error in scan and compare:', error.message);
     }
 }
 
@@ -396,9 +427,14 @@ async function startScraper(onBetFound) {
         
         console.log('✅ Connected to shuffle.com');
         console.log('👀 Monitoring High Roller bets...');
+        console.log(`📊 Snapshot comparison method: Scan every ${SCAN_INTERVAL/1000}s and report only NEW bets`);
+        
+        // Initial scan to populate first snapshot
+        await scanAndCompare(onBetFound);
 
+        // Scan every 5 seconds and compare
         setInterval(async () => {
-            await scrapeBets(onBetFound);
+            await scanAndCompare(onBetFound);
         }, SCAN_INTERVAL);
 
     } catch (error) {
