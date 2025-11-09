@@ -388,6 +388,34 @@ app.get('/api/tracked-users/:username/bets', (req, res) => {
     });
 });
 
+// Reset all temporary bets (keeps tracked users' bets)
+app.post('/api/admin/reset-bets', (req, res) => {
+    const { password } = req.body;
+    
+    if (password !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Invalid password' });
+    }
+    
+    const beforeCount = bets.length;
+    const trackedCount = Object.values(trackedUserBets).reduce((sum, userBets) => sum + userBets.length, 0);
+    
+    // Clear all temporary bets and stats
+    bets.length = 0;
+    Object.keys(userStats).forEach(username => {
+        if (!trackedUsers.has(username)) {
+            delete userStats[username];
+        }
+    });
+    
+    res.json({ 
+        success: true, 
+        message: `Reset complete! Deleted ${beforeCount} temporary bets. Kept ${trackedCount} bets from ${trackedUsers.size} tracked users.`,
+        deletedBets: beforeCount,
+        keptBets: trackedCount,
+        trackedUsers: trackedUsers.size
+    });
+});
+
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -696,6 +724,13 @@ app.get('/', (req, res) => {
                     
                     <div id="adminPanel" style="display:none;">
                         <h2>⚙️ Admin Panel - Manage Tracked Users</h2>
+                        
+                        <div class="stat-card" style="margin-bottom: 20px; background: #2a1a1a; border: 2px solid #ff4444;">
+                            <h3 style="color: #ff4444;">🗑️ Reset All Temporary Bets</h3>
+                            <p style="color: #888; margin: 15px 0;">This will delete all bets EXCEPT those from tracked users below. Use this to clear temporary data while keeping saved user data.</p>
+                            <button onclick="resetBets()" style="background: #ff4444; border-color: #ff6666;">Reset All Bets (Keep Tracked Users)</button>
+                        </div>
+                        
                         <div class="stat-card" style="margin-bottom: 20px;">
                             <h3>Add New User to Track</h3>
                             <input type="text" id="newUsername" placeholder="Enter username to track..." style="width: 100%; margin-bottom: 10px;">
@@ -1075,6 +1110,35 @@ app.get('/', (req, res) => {
                     } else {
                         alert(result.message);
                         await loadTrackedUsers();
+                    }
+                }
+                
+                async function resetBets() {
+                    if (!confirm('⚠️ WARNING: This will DELETE ALL BETS except those from tracked users!\n\nThis action cannot be undone. Are you sure?')) {
+                        return;
+                    }
+                    
+                    if (!confirm('🚨 FINAL CONFIRMATION: Delete all temporary bets and keep only tracked users\' bets?')) {
+                        return;
+                    }
+                    
+                    const res = await fetch('/api/admin/reset-bets', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: adminPassword })
+                    });
+                    
+                    const result = await res.json();
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else {
+                        alert(\`✅ \${result.message}\`);
+                        // Refresh the current view
+                        if (currentTab === 'recent') {
+                            await loadBets();
+                        } else if (currentTab === 'users') {
+                            await loadUsers();
+                        }
                     }
                 }
                 
