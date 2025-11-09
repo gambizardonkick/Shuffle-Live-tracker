@@ -378,7 +378,7 @@ app.get('/', (req, res) => {
                 }
                 
                 async function loadBets() {
-                    const res = await fetch('/api/bets?limit=200');
+                    const res = await fetch('/api/bets?limit=10000');
                     allBets = await res.json();
                     displayBets(allBets);
                     
