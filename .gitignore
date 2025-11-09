@@ -138,3 +138,10 @@ dist
 replit.nix
 generated-icon.png
 attached_assets/
+
+# Chrome/Puppeteer cache
+.cache/
+.local/
+
+# Chromium download
+.chromium-browser-snapshots/

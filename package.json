@@ -6,7 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server-scraper.js",
-    "postinstall": "node node_modules/puppeteer/install.js"
+    "dev": "node server-scraper.js"
   },
   "keywords": [],
   "author": "",

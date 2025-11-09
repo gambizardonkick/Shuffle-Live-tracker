@@ -70,15 +70,21 @@ Server-side bet tracking system that automatically monitors shuffle.com and trac
 ## Technical Stack
 
 - **Backend**: Node.js + Express
-- **Scraping**: Puppeteer (headless Chrome)
+- **Scraping**: Puppeteer (headless Chrome) - auto-downloads Chromium on deployment
 - **Price API**: CoinGecko
 - **Notifications**: Discord Webhooks
 - **Storage**: In-memory (resets on restart)
+- **Deployment**: Ready for Render, Railway, Heroku, or any Node.js host
 
 ## Environment Variables
 
-- `DISCORD_WEBHOOK_URL` - Your Discord webhook URL
-- `PORT` - Server port (default: 5000)
+Required environment variables:
+
+- `DISCORD_WEBHOOK_URL` - Your Discord webhook URL for notifications
+- `ADMIN_PASSWORD` - Password for admin panel (default: GZ-HUA-12D-19)
+- `PORT` - Server port (default: 5000 for local, 10000 for Render)
+
+See `.env.example` for template.
 
 ## Output Format
 
@@ -110,11 +116,30 @@ Each bet includes:
 - Games played
 - Currencies used
 
+## Deployment
+
+### Quick Deploy to Render
+1. Push code to GitHub
+2. Connect to Render
+3. Set environment variables (see `.env.example`)
+4. Deploy! Chromium downloads automatically during build
+
+See `DEPLOYMENT.md` for detailed step-by-step instructions.
+
+### Local Development
+```bash
+npm install
+npm start
+# Server runs on http://localhost:5000
+```
+
 ## Notes
 
 - Scraper runs automatically when server starts
 - Crypto prices update every 60 seconds
 - Dashboard auto-refreshes every 3 seconds
-- Bet deduplication prevents duplicate tracking
+- Bet deduplication prevents duplicate tracking using timestamps
 - In-memory storage means data resets on server restart
+- Chromium (~170MB) downloads automatically on first deployment
+- Admin panel available at `/admin` (password protected)
 - For production, consider adding database persistence
