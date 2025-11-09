@@ -377,38 +377,6 @@ app.delete('/api/tracked-users/:username', (req, res) => {
     res.json({ success: true, username, message: `${username} removed from tracked users` });
 });
 
-app.post('/api/admin/clear-data', (req, res) => {
-    const { password } = req.body;
-    
-    if (password !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Invalid password' });
-    }
-    
-    // Save count before clearing
-    const betsCleared = bets.length;
-    let usersCleared = 0;
-    
-    // Clear general bets and stats (but keep tracked users' data)
-    bets.length = 0;
-    Object.keys(userStats).forEach(key => {
-        // Keep tracked users' stats
-        if (!trackedUsers.has(key)) {
-            delete userStats[key];
-            usersCleared++;
-        }
-    });
-    
-    const trackedCount = trackedUsers.size;
-    
-    res.json({ 
-        success: true, 
-        message: `Cleared ${betsCleared} bets and ${usersCleared} user stats. ${trackedCount} tracked user(s) preserved.`,
-        betsCleared,
-        usersCleared,
-        trackedUsersPreserved: trackedCount
-    });
-});
-
 app.get('/api/tracked-users/:username/bets', (req, res) => {
     const { username } = req.params;
     const userBets = trackedUserBets[username] || [];
@@ -749,14 +717,6 @@ app.get('/', (req, res) => {
                             </thead>
                             <tbody id="trackedUsersBody"></tbody>
                         </table>
-                        
-                        <div class="stat-card" style="margin-top: 30px; border-left: 4px solid #ef4444;">
-                            <h3 style="color: #ef4444;">⚠️ Danger Zone</h3>
-                            <p style="color: #9aa0a6; margin-bottom: 15px;">Clear all general bet history and user stats. Tracked users' permanent data will be preserved.</p>
-                            <button onclick="clearAllData()" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 2px 8px rgba(239, 68, 68, 0.2);">
-                                🗑️ Clear All Data (Except Tracked Users)
-                            </button>
-                        </div>
                     </div>
                 </div>
                 
@@ -1115,31 +1075,6 @@ app.get('/', (req, res) => {
                     } else {
                         alert(result.message);
                         await loadTrackedUsers();
-                    }
-                }
-                
-                async function clearAllData() {
-                    if (!confirm('⚠️ WARNING: This will clear ALL general bet history and user stats!\n\nTracked users\' permanent data will be preserved.\n\nAre you sure you want to continue?')) {
-                        return;
-                    }
-                    
-                    if (!confirm('🚨 FINAL CONFIRMATION: This action cannot be undone!\n\nClick OK to proceed with clearing data.')) {
-                        return;
-                    }
-                    
-                    const res = await fetch('/api/admin/clear-data', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ password: adminPassword })
-                    });
-                    
-                    const result = await res.json();
-                    if (result.error) {
-                        alert('Error: ' + result.error);
-                    } else {
-                        alert(\`✅ Success!\n\n\${result.message}\`);
-                        // Reload the page to reflect cleared data
-                        await loadData();
                     }
                 }
                 
