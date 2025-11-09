@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const SCAN_INTERVAL = 50; // Scan every 50ms (20x per second) to catch all bets before they scroll off
+const SCAN_INTERVAL = 2000; // Scan every 2 seconds to process 50-row chunks efficiently
 
 let browser = null;
 let page = null;
@@ -229,13 +229,11 @@ async function scrapeBets(onBetFound) {
                         url: SHUFFLE_URL
                     };
                     
-                    // Skip logging and processing Hidden users (per user request)
-                    if (username !== 'Hidden') {
-                        console.log(`✅ ${username} | ${game} | ${betAmountText} ${currency} ($${betAmountUSD.toFixed(2)}) | ${multiplierText} | Payout: ${payoutText} ${payoutCurrency} ($${payoutUSD.toFixed(2)})`);
-                        
-                        if (onBetFound) {
-                            onBetFound(betData);
-                        }
+                    // Log all bets including Hidden (all Hidden users tracked as single person)
+                    console.log(`✅ ${username} | ${game} | ${betAmountText} ${currency} ($${betAmountUSD.toFixed(2)}) | ${multiplierText} | Payout: ${payoutText} ${payoutCurrency} ($${payoutUSD.toFixed(2)})`);
+                    
+                    if (onBetFound) {
+                        onBetFound(betData);
                     }
 
                     if (processedBets.size > 5000) {
@@ -283,39 +281,22 @@ async function startScraper(onBetFound) {
         await page.setViewport({ width: 1920, height: 1080 });
         
         console.log('📡 Navigating to shuffle.com...');
-        await page.goto(SHUFFLE_URL, { waitUntil: 'networkidle0', timeout: 90000 });
+        await page.goto(SHUFFLE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
         
-        console.log('⏳ Waiting for page to fully load...');
-        await new Promise(resolve => setTimeout(resolve, 8000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
-        console.log('📜 Scrolling main content area down...');
-        
-        // Scroll progressively with delays to trigger lazy loading
-        for (let step = 1; step <= 5; step++) {
-            const scrollResult = await page.evaluate((step) => {
-                const mainContent = document.querySelector('#pageContent') || 
-                                   document.querySelector('.CasinoLayout_mainContent__fyA1x') ||
-                                   document.querySelector('[class*="CasinoLayout_mainContent"]');
-                
-                if (mainContent) {
-                    const scrollHeight = mainContent.scrollHeight;
-                    mainContent.scrollTop = (scrollHeight / 5) * step;
-                    return { 
-                        success: true, 
-                        scrollTop: mainContent.scrollTop,
-                        scrollHeight,
-                        step
-                    };
-                }
-                return { success: false, step };
-            }, step);
+        // Scroll directly to bottom to load Live Bets table
+        await page.evaluate(() => {
+            const mainContent = document.querySelector('#pageContent') || 
+                               document.querySelector('.CasinoLayout_mainContent__fyA1x') ||
+                               document.querySelector('[class*="CasinoLayout_mainContent"]');
             
-            console.log(`📜 Scroll step ${step}/5:`, JSON.stringify(scrollResult));
-            await new Promise(resolve => setTimeout(resolve, 1500));
-        }
+            if (mainContent) {
+                mainContent.scrollTop = mainContent.scrollHeight;
+            }
+        });
         
-        console.log('⏬ Scroll complete, waiting for content to load...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 500));
         
         console.log('🔍 Looking for Live Bets section...');
         
@@ -344,37 +325,49 @@ async function startScraper(onBetFound) {
         const liveBetsFound = tableInfo.some(t => t.columnCount >= 5);
         
         if (!liveBetsFound) {
-            console.log('⚠️ Live bets table not found - waiting longer for it to load...');
-            await new Promise(resolve => setTimeout(resolve, 10000));
-            
-            // Check again
-            const tableInfo2 = await page.evaluate(() => {
-                const allTables = document.querySelectorAll('table');
-                const info = [];
-                allTables.forEach((table, idx) => {
-                    const rows = table.querySelectorAll('tbody tr');
-                    if (rows.length > 0) {
-                        const firstRow = rows[0];
-                        const cells = firstRow.querySelectorAll('td');
-                        info.push({
-                            index: idx,
-                            rowCount: rows.length,
-                            columnCount: cells.length
-                        });
-                    }
-                });
-                return info;
-            });
-            
-            console.log('📋 Tables found after waiting:', JSON.stringify(tableInfo2, null, 2));
-            
-            if (!tableInfo2.some(t => t.columnCount >= 5)) {
-                console.log('⚠️ Still no live bets table found');
-            } else {
-                console.log('✅ Found Live Bets table after waiting!');
-            }
+            console.log('⚠️ Live bets table not found - waiting...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
         } else {
             console.log('✅ Found Live Bets table!');
+        }
+        
+        // Change table row limit from 10 to 50
+        console.log('🔧 Changing to 50 rows...');
+        try {
+            const dropdownClicked = await page.evaluate(() => {
+                const button = document.querySelector('.ActivityBoard_select__9i4OK') || 
+                              document.querySelector('button[aria-label*="activity query limit"]');
+                if (button) {
+                    button.click();
+                    return true;
+                }
+                return false;
+            });
+            
+            if (dropdownClicked) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+                const option50Clicked = await page.evaluate(() => {
+                    const options = Array.from(document.querySelectorAll('[role="option"]'));
+                    const option50 = options.find(opt => opt.textContent.trim() === '50');
+                    if (option50) {
+                        option50.click();
+                        return true;
+                    }
+                    return false;
+                });
+                
+                if (option50Clicked) {
+                    console.log('✅ Set to 50 rows');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } else {
+                    console.log('⚠️ 50 option not found');
+                }
+            } else {
+                console.log('⚠️ Dropdown not found');
+            }
+        } catch (err) {
+            console.log('⚠️ Error changing row limit:', err.message);
         }
         
         console.log('✅ Connected to shuffle.com');
