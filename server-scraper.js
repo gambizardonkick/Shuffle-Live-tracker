@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'GZ-HUA-12D-19';
 
 const bets = [];
 const userStats = {};

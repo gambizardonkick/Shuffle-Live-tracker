@@ -48,7 +48,7 @@ Preferred communication style: Simple, everyday language.
 
 **Authentication**
 - Password-protected admin panel for managing tracked users
-- Password stored in environment variable `ADMIN_PASSWORD` (defaults to "admin123")
+- Password stored in environment variable `ADMIN_PASSWORD` (defaults to "GZ-HUA-12D-19")
 - Admin endpoints require password verification via `/api/admin/verify`
 - Problem: Need to secure admin panel from unauthorized access
 - Rationale: Simple password-based auth sufficient for admin operations
