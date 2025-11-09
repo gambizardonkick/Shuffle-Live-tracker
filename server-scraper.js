@@ -136,7 +136,7 @@ async function sendToDiscord(bet, webhookUrl) {
     
     const username = bet.username;
     const isWin = bet.isWin;
-    const profitLoss = bet.payoutUSD - bet.betAmountUSD;
+    const profitLoss = bet.payoutUSD;
     
     // Get user stats
     const now = new Date();
