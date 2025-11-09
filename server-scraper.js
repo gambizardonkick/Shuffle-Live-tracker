@@ -14,6 +14,9 @@ const TARGET_USERNAME = 'TheGoobr';
 
 const bets = [];
 const userStats = {};
+const trackedUsers = new Set(['TheGoobr']); // Users to track permanently
+const trackedUserBets = {}; // Permanent storage for tracked users' bets
+const serverStartTime = new Date();
 
 function getDateKey(date) {
     const d = new Date(date);
@@ -182,11 +185,18 @@ function handleBet(betData) {
         bets.splice(0, 50000);
     }
     
-    updateUserStats(betData);
-    
-    if (betData.username === TARGET_USERNAME) {
+    // Store tracked users' bets permanently (never delete)
+    if (trackedUsers.has(betData.username)) {
+        if (!trackedUserBets[betData.username]) {
+            trackedUserBets[betData.username] = [];
+        }
+        trackedUserBets[betData.username].push(betData);
+        
+        // Send to Discord for tracked users
         sendToDiscord(betData);
     }
+    
+    updateUserStats(betData);
 }
 
 app.get('/api/bets', (req, res) => {
@@ -242,6 +252,48 @@ app.get('/api/prices', (req, res) => {
     res.json(getCryptoPrices());
 });
 
+// Tracked users management
+app.get('/api/tracked-users', (req, res) => {
+    const users = Array.from(trackedUsers).map(username => ({
+        username,
+        totalBets: trackedUserBets[username]?.length || 0,
+        lifetimeStats: userStats[username] || {},
+        trackingSince: serverStartTime.toISOString()
+    }));
+    res.json(users);
+});
+
+app.post('/api/tracked-users', (req, res) => {
+    const { username } = req.body;
+    if (!username) {
+        return res.status(400).json({ error: 'Username required' });
+    }
+    
+    trackedUsers.add(username);
+    if (!trackedUserBets[username]) {
+        trackedUserBets[username] = [];
+    }
+    
+    res.json({ success: true, username, message: `${username} is now being tracked permanently` });
+});
+
+app.delete('/api/tracked-users/:username', (req, res) => {
+    const { username } = req.params;
+    trackedUsers.delete(username);
+    res.json({ success: true, username, message: `${username} removed from tracked users` });
+});
+
+app.get('/api/tracked-users/:username/bets', (req, res) => {
+    const { username } = req.params;
+    const userBets = trackedUserBets[username] || [];
+    res.json({
+        username,
+        totalBets: userBets.length,
+        trackingSince: serverStartTime.toISOString(),
+        bets: userBets.slice().reverse()
+    });
+});
+
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -290,10 +342,11 @@ app.get('/', (req, res) => {
                     <div class="price-grid" id="priceGrid"></div>
                 </div>
                 
-                <div class="tabs">
+                <div class="tabs" id="tabsContainer">
                     <div class="tab active" onclick="switchTab('recent')">Recent Bets</div>
                     <div class="tab" onclick="switchTab('users')">Top Users</div>
-                    <div class="tab" onclick="switchTab('thegoobr')">TheGoobr Stats</div>
+                    <div class="tab" onclick="switchTab('admin')">⚙️ Admin Panel</div>
+                    <div id="dynamicTabs"></div>
                 </div>
                 
                 <div id="recentTab">
@@ -349,20 +402,59 @@ app.get('/', (req, res) => {
                         <tbody id="thegoobrBody"></tbody>
                     </table>
                 </div>
+                
+                <div id="adminTab" style="display:none;">
+                    <h2>⚙️ Admin Panel - Manage Tracked Users</h2>
+                    <div class="stat-card" style="margin-bottom: 20px;">
+                        <h3>Add New User to Track</h3>
+                        <input type="text" id="newUsername" placeholder="Enter username to track...">
+                        <button onclick="addTrackedUser()">Add User</button>
+                        <p style="color: #888; margin-top: 10px;">Tracked users' bets are stored permanently and never deleted. Each gets their own tab.</p>
+                    </div>
+                    
+                    <h3>Currently Tracked Users</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Total Lifetime Bets</th>
+                                <th>Tracking Since</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trackedUsersBody"></tbody>
+                    </table>
+                </div>
+                
+                <div id="trackedUserTabs"></div>
             </div>
             
             <script>
                 let currentTab = 'recent';
                 let allBets = [];
+                let trackedUsers = [];
                 
                 function switchTab(tab) {
                     currentTab = tab;
                     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
                     event.target.classList.add('active');
                     
-                    document.getElementById('recentTab').style.display = tab === 'recent' ? 'block' : 'none';
-                    document.getElementById('usersTab').style.display = tab === 'users' ? 'block' : 'none';
-                    document.getElementById('thegoobrTab').style.display = tab === 'thegoobr' ? 'block' : 'none';
+                    // Hide all tabs
+                    document.getElementById('recentTab').style.display = 'none';
+                    document.getElementById('usersTab').style.display = 'none';
+                    document.getElementById('thegoobrTab').style.display = 'none';
+                    document.getElementById('adminTab').style.display = 'none';
+                    document.querySelectorAll('.tracked-user-tab').forEach(t => t.style.display = 'none');
+                    
+                    // Show selected tab
+                    if (tab === 'recent') document.getElementById('recentTab').style.display = 'block';
+                    else if (tab === 'users') document.getElementById('usersTab').style.display = 'block';
+                    else if (tab === 'thegoobr') document.getElementById('thegoobrTab').style.display = 'block';
+                    else if (tab === 'admin') document.getElementById('adminTab').style.display = 'block';
+                    else {
+                        const userTab = document.getElementById(\`user-\${tab}\`);
+                        if (userTab) userTab.style.display = 'block';
+                    }
                     
                     loadData();
                 }
@@ -494,14 +586,153 @@ app.get('/', (req, res) => {
                     document.getElementById('thegoobrBody').innerHTML = rows || '<tr><td colspan="7">No bets yet</td></tr>';
                 }
                 
+                async function loadTrackedUsers() {
+                    const res = await fetch('/api/tracked-users');
+                    trackedUsers = await res.json();
+                    
+                    // Update dynamic tabs
+                    const dynamicTabsHtml = trackedUsers.map(user => \`
+                        <div class="tab" onclick="switchTab('\${user.username}')">\${user.username}</div>
+                    \`).join('');
+                    document.getElementById('dynamicTabs').innerHTML = dynamicTabsHtml;
+                    
+                    // Create tab content for each tracked user
+                    const tabsContainer = document.getElementById('trackedUserTabs');
+                    const tabsHtml = trackedUsers.map(user => \`
+                        <div id="user-\${user.username}" class="tracked-user-tab" style="display:none;">
+                            <h2>📊 \${user.username} - Lifetime Stats</h2>
+                            <div class="stat-card" style="margin-bottom: 20px;">
+                                <h3>Tracking Information</h3>
+                                <div class="label">Tracking since: \${new Date(user.trackingSince).toLocaleString()}</div>
+                                <div class="label">Total Lifetime Bets: <span class="value">\${user.totalBets}</span></div>
+                                <div class="label">⚠️ These bets are stored permanently and never deleted</div>
+                            </div>
+                            <div class="stats-grid" id="stats-\${user.username}"></div>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Game</th>
+                                        <th>Bet Amount</th>
+                                        <th>USD</th>
+                                        <th>Multiplier</th>
+                                        <th>Payout USD</th>
+                                        <th>Result</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bets-\${user.username}"></tbody>
+                            </table>
+                        </div>
+                    \`).join('');
+                    tabsContainer.innerHTML = tabsHtml;
+                    
+                    // Update admin panel
+                    const adminRows = trackedUsers.map(user => \`
+                        <tr>
+                            <td><strong>\${user.username}</strong></td>
+                            <td>\${user.totalBets}</td>
+                            <td>\${new Date(user.trackingSince).toLocaleString()}</td>
+                            <td><button onclick="removeTrackedUser('\${user.username}')">Remove</button></td>
+                        </tr>
+                    \`).join('');
+                    document.getElementById('trackedUsersBody').innerHTML = adminRows || '<tr><td colspan="4">No tracked users yet</td></tr>';
+                }
+                
+                async function loadTrackedUserData(username) {
+                    const res = await fetch(\`/api/tracked-users/\${username}/bets\`);
+                    const data = await res.json();
+                    
+                    const res2 = await fetch(\`/api/user/\${username}/stats\`);
+                    const stats = await res2.json();
+                    
+                    document.getElementById(\`stats-\${username}\`).innerHTML = \`
+                        <div class="stat-card">
+                            <h3>All Time Stats</h3>
+                            <div class="value">\${stats.allTime.totalBets || 0}</div>
+                            <div class="label">Total Bets</div>
+                            <div class="label">Wagered: $\${(stats.allTime.totalWageredUSD || 0).toFixed(2)}</div>
+                            <div class="label">Profit: $\${(stats.allTime.totalProfitUSD || 0).toFixed(2)}</div>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Daily Stats</h3>
+                            <div class="value">\${stats.daily.totalBets}</div>
+                            <div class="label">Bets today | Win rate: \${stats.daily.winRate.toFixed(1)}%</div>
+                            <div class="label">Profit: $\${stats.daily.totalProfitUSD.toFixed(2)}</div>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Weekly Stats</h3>
+                            <div class="value">\${stats.weekly.totalBets}</div>
+                            <div class="label">Bets this week | Win rate: \${stats.weekly.winRate.toFixed(1)}%</div>
+                            <div class="label">Profit: $\${stats.weekly.totalProfitUSD.toFixed(2)}</div>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Monthly Stats</h3>
+                            <div class="value">\${stats.monthly.totalBets}</div>
+                            <div class="label">Bets this month | Win rate: \${stats.monthly.winRate.toFixed(1)}%</div>
+                            <div class="label">Profit: $\${stats.monthly.totalProfitUSD.toFixed(2)}</div>
+                        </div>
+                    \`;
+                    
+                    const rows = data.bets.map(bet => \`
+                        <tr>
+                            <td>\${new Date(bet.timestamp).toLocaleTimeString()}</td>
+                            <td>\${bet.game}</td>
+                            <td>\${bet.betAmountText} \${bet.currency}</td>
+                            <td>$\${bet.betAmountUSD.toFixed(2)}</td>
+                            <td>\${bet.multiplierText}</td>
+                            <td class="\${bet.isWin ? 'win' : 'loss'}">$\${bet.payoutUSD.toFixed(2)}</td>
+                            <td>\${bet.isWin ? '✅ WIN' : '❌ LOSS'}</td>
+                        </tr>
+                    \`).join('');
+                    
+                    document.getElementById(\`bets-\${username}\`).innerHTML = rows || '<tr><td colspan="7">No bets yet</td></tr>';
+                }
+                
+                async function addTrackedUser() {
+                    const username = document.getElementById('newUsername').value.trim();
+                    if (!username) {
+                        alert('Please enter a username');
+                        return;
+                    }
+                    
+                    const res = await fetch('/api/tracked-users', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username })
+                    });
+                    
+                    const result = await res.json();
+                    alert(result.message);
+                    document.getElementById('newUsername').value = '';
+                    await loadTrackedUsers();
+                }
+                
+                async function removeTrackedUser(username) {
+                    if (!confirm(\`Remove \${username} from tracked users? Their bets will still be in stats but won't be stored permanently anymore.\`)) {
+                        return;
+                    }
+                    
+                    const res = await fetch(\`/api/tracked-users/\${username}\`, { method: 'DELETE' });
+                    const result = await res.json();
+                    alert(result.message);
+                    await loadTrackedUsers();
+                }
+                
                 async function loadData() {
                     await loadPrices();
+                    await loadTrackedUsers();
+                    
                     if (currentTab === 'recent') {
                         await loadBets();
                     } else if (currentTab === 'users') {
                         await loadUsers();
                     } else if (currentTab === 'thegoobr') {
                         await loadTheGoobr();
+                    } else if (currentTab === 'admin') {
+                        // Admin panel already loaded by loadTrackedUsers
+                    } else {
+                        // Load tracked user data
+                        await loadTrackedUserData(currentTab);
                     }
                 }
                 
