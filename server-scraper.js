@@ -393,7 +393,7 @@ app.get('/', (req, res) => {
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Shuffle.com Live High Roller Bet Tracker</title>
+            <title>Shuffle.com Live Bet Tracker</title>
             <style>
                 * { box-sizing: border-box; margin: 0; padding: 0; }
                 body { 
@@ -615,7 +615,7 @@ app.get('/', (req, res) => {
         </head>
         <body>
             <div class="container">
-                <h1>🎲 Shuffle.com Live High Roller Bet Tracker</h1>
+                <h1>🎲 Shuffle.com Live Bet Tracker</h1>
                 <p class="status">Server-side scraping - Auto refresh every 3s</p>
                 
                 <div class="prices" id="prices">
