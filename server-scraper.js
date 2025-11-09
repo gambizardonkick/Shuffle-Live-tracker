@@ -176,8 +176,10 @@ async function sendToDiscord(bet) {
 function handleBet(betData) {
     bets.push(betData);
     
-    if (bets.length > 10000) {
-        bets.splice(0, 5000);
+    // Keep unlimited bets - text is lightweight
+    // Only trim if we hit 100k to prevent extreme memory issues
+    if (bets.length > 100000) {
+        bets.splice(0, 50000);
     }
     
     updateUserStats(betData);
@@ -188,7 +190,7 @@ function handleBet(betData) {
 }
 
 app.get('/api/bets', (req, res) => {
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = req.query.limit ? parseInt(req.query.limit) : null;
     const username = req.query.username;
     
     let filteredBets = bets;
@@ -196,7 +198,9 @@ app.get('/api/bets', (req, res) => {
         filteredBets = bets.filter(b => b.username === username);
     }
     
-    res.json(filteredBets.slice(-limit).reverse());
+    // Return all bets if no limit specified
+    const result = limit ? filteredBets.slice(-limit).reverse() : filteredBets.slice().reverse();
+    res.json(result);
 });
 
 app.get('/api/users', (req, res) => {
@@ -378,7 +382,7 @@ app.get('/', (req, res) => {
                 }
                 
                 async function loadBets() {
-                    const res = await fetch('/api/bets?limit=10000');
+                    const res = await fetch('/api/bets');
                     allBets = await res.json();
                     displayBets(allBets);
                     
