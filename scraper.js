@@ -208,7 +208,7 @@ async function scrapeBets() {
                 const isWin = payout > 0;
 
                 const timestamp = Date.now();
-                const betId = createStableBetId(username, betAmount, game, multiplier, payout);
+                const betId = createStableBetId(username, betAmount, game, multiplier, payout, timestamp);
 
                 const betData = {
                     betId,
@@ -599,5 +599,6 @@ function getCryptoPrices() {
 module.exports = {
     startScraper,
     stopScraper,
-    getCryptoPrices
+    getCryptoPrices,
+    createStableBetId
 };
