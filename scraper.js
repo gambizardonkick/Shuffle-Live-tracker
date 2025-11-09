@@ -2,15 +2,13 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const MIN_INTERVAL = 2000;  // 2 seconds minimum (high activity)
-const MAX_INTERVAL = 20000; // 20 seconds maximum (low activity)
+const REPORT_INTERVAL = 3000; // Report batches every 3 seconds
 
 let browser = null;
 let page = null;
 let isRunning = false;
 let processedBets = new Set();
-let previousSnapshot = new Set(); // Store previous scan's bet IDs
-let currentScanTimeout = null;
+let betQueue = []; // Queue for real-time captured bets
 
 const cryptoPrices = {
     BTC: 0,
@@ -244,61 +242,195 @@ async function scrapeBets() {
     return currentBets;
 }
 
-function calculateNextInterval(newBetsCount) {
-    // Adaptive interval based on activity level (2-20 seconds)
-    if (newBetsCount >= 40) return 2000;   // 2s - Very high activity (nearly full table refresh)
-    if (newBetsCount >= 25) return 3000;   // 3s - High activity
-    if (newBetsCount >= 15) return 5000;   // 5s - Medium activity
-    if (newBetsCount >= 8)  return 8000;   // 8s - Moderate activity
-    if (newBetsCount >= 4)  return 12000;  // 12s - Low activity
-    if (newBetsCount >= 1)  return 15000;  // 15s - Very low activity
-    return 20000;                           // 20s - Idle (no new bets)
+async function setupRealtimeCapture() {
+    try {
+        // Inject MutationObserver to watch for new table rows in real-time
+        await page.exposeFunction('onBetDetected', (betRawData) => {
+            betQueue.push(betRawData);
+        });
+        
+        await page.evaluate(() => {
+            // Find the High Roller table
+            const findBetTable = () => {
+                const allTables = document.querySelectorAll('table');
+                for (const table of allTables) {
+                    const tbody = table.querySelector('tbody');
+                    if (tbody) {
+                        const rows = tbody.querySelectorAll('tr');
+                        if (rows.length > 0) {
+                            const cells = rows[0].querySelectorAll('td');
+                            if (cells.length >= 5) {
+                                return tbody;
+                            }
+                        }
+                    }
+                }
+                return null;
+            };
+            
+            const parseBetRow = (row) => {
+                try {
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length < 5) return null;
+                    
+                    const userCell = cells[0];
+                    const gameCell = cells[1];
+                    const amountCell = cells[2];
+                    const multiplierCell = cells[3];
+                    const payoutCell = cells[4];
+                    
+                    // Parse username
+                    let username = 'Unknown';
+                    const anonymousDiv = userCell.querySelector('.AnonymousUser_root__4chUx');
+                    if (anonymousDiv) {
+                        username = 'Hidden';
+                    } else {
+                        const userButton = userCell.querySelector('button');
+                        if (userButton) {
+                            const clone = userButton.cloneNode(true);
+                            const badge = clone.querySelector('.VipBadge_root__ozOvC');
+                            if (badge) badge.remove();
+                            username = clone.textContent.trim();
+                        }
+                    }
+                    
+                    // Parse game
+                    const gameTitle = gameCell.querySelector('.GameTitle_root__R4XRF');
+                    const game = gameTitle ? gameTitle.textContent.trim() : 'Unknown';
+                    
+                    // Parse currency
+                    const currencyImg = amountCell.querySelector('.CryptoIcon_image__1494s');
+                    let currency = 'USDT';
+                    if (currencyImg) {
+                        const imgSrc = currencyImg.getAttribute('src') || '';
+                        if (imgSrc.includes('btc')) currency = 'BTC';
+                        else if (imgSrc.includes('eth')) currency = 'ETH';
+                        else if (imgSrc.includes('usdc')) currency = 'USDC';
+                        else if (imgSrc.includes('sol')) currency = 'SOL';
+                        // Add more as needed
+                    }
+                    
+                    // Parse bet amount
+                    const amountSpan = amountCell.querySelector('.FormattedAmount_evenlySpacedNumber__hmNwm');
+                    const betAmountText = amountSpan ? amountSpan.textContent.trim() : '0';
+                    
+                    // Parse multiplier
+                    const multiplierSpan = multiplierCell.querySelector('.MultiplierCell_root__Wd4zc span[style*="color"]');
+                    const multiplierText = multiplierSpan ? multiplierSpan.textContent.trim() : '0';
+                    
+                    // Parse payout
+                    const payoutSpan = payoutCell.querySelector('.FormattedAmount_evenlySpacedNumber__hmNwm');
+                    const payoutText = payoutSpan ? payoutSpan.textContent.trim() : '0';
+                    
+                    return {
+                        username,
+                        game,
+                        currency,
+                        betAmountText,
+                        multiplierText,
+                        payoutText,
+                        timestamp: Date.now()
+                    };
+                } catch (err) {
+                    return null;
+                }
+            };
+            
+            const betTable = findBetTable();
+            if (!betTable) {
+                console.log('⚠️ Could not find bet table for MutationObserver');
+                return;
+            }
+            
+            // Set up MutationObserver to watch for new rows
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.tagName === 'TR') {
+                            const betData = parseBetRow(node);
+                            if (betData && window.onBetDetected) {
+                                window.onBetDetected(betData);
+                            }
+                        }
+                    }
+                }
+            });
+            
+            observer.observe(betTable, {
+                childList: true,
+                subtree: false
+            });
+            
+            console.log('✅ MutationObserver active - capturing bets in real-time');
+        });
+        
+        console.log('✅ Real-time bet capture initialized');
+    } catch (error) {
+        console.error('Error setting up real-time capture:', error.message);
+    }
 }
 
-async function scanAndCompare(onBetFound) {
-    try {
-        // Scan page and get all current bets
-        const currentBets = await scrapeBets();
-        const currentSnapshot = new Set(currentBets.map(bet => bet.betId));
-        
-        // Find NEW bets (in current but not in previous)
-        const newBets = currentBets.filter(bet => !previousSnapshot.has(bet.betId));
-        
-        // Report only NEW bets
-        for (const bet of newBets) {
-            if (!processedBets.has(bet.betId)) {
-                processedBets.add(bet.betId);
+async function processQueuedBets(onBetFound) {
+    if (betQueue.length === 0) return;
+    
+    const betsToProcess = [...betQueue];
+    betQueue = [];
+    
+    let processedCount = 0;
+    
+    for (const rawBet of betsToProcess) {
+        try {
+            const betAmount = parseNumericValue(rawBet.betAmountText);
+            const multiplier = parseNumericValue(rawBet.multiplierText);
+            const payout = parseNumericValue(rawBet.payoutText);
+            
+            const betAmountUSD = convertToUSD(betAmount, rawBet.currency);
+            const payoutUSD = convertToUSD(payout, rawBet.currency);
+            const isWin = payout > 0;
+            
+            const betId = createStableBetId(rawBet.username, betAmount, rawBet.game, multiplier, payout);
+            
+            if (!processedBets.has(betId)) {
+                processedBets.add(betId);
                 
-                console.log(`✅ ${bet.username} | ${bet.game} | ${bet.betAmountText} ${bet.currency} ($${bet.betAmountUSD.toFixed(2)}) | ${bet.multiplierText} | Payout: ${bet.payoutText} ($${bet.payoutUSD.toFixed(2)})`);
+                const betData = {
+                    betId,
+                    username: rawBet.username,
+                    game: rawBet.game,
+                    currency: rawBet.currency,
+                    betAmount,
+                    betAmountText: rawBet.betAmountText,
+                    betAmountUSD,
+                    multiplier,
+                    multiplierText: rawBet.multiplierText,
+                    payout,
+                    payoutText: rawBet.payoutText,
+                    payoutUSD,
+                    isWin,
+                    timestamp: rawBet.timestamp,
+                    url: SHUFFLE_URL
+                };
+                
+                console.log(`✅ ${betData.username} | ${betData.game} | ${betData.betAmountText} ${betData.currency} ($${betData.betAmountUSD.toFixed(2)}) | ${betData.multiplierText} | Payout: ${betData.payoutText} ($${betData.payoutUSD.toFixed(2)})`);
                 
                 if (onBetFound) {
-                    onBetFound(bet);
+                    onBetFound(betData);
                 }
+                
+                processedCount++;
                 
                 if (processedBets.size > 5000) {
                     const toDelete = Array.from(processedBets).slice(0, 2000);
                     toDelete.forEach(id => processedBets.delete(id));
                 }
             }
+        } catch (err) {
+            console.error('Error processing queued bet:', err.message);
         }
-        
-        // Update snapshot for next comparison
-        previousSnapshot = currentSnapshot;
-        
-        // Calculate next interval based on activity
-        const nextInterval = calculateNextInterval(newBets.length);
-        
-        if (newBets.length > 0) {
-            console.log(`📊 ${newBets.length} new bets found (Total: ${currentBets.length}) → Next scan in ${nextInterval/1000}s`);
-        } else {
-            console.log(`📊 No new bets → Next scan in ${nextInterval/1000}s`);
-        }
-        
-        return nextInterval;
-        
-    } catch (error) {
-        console.error('Error in scan and compare:', error.message);
-        return 5000; // Default to 5s on error
+    }
+    
+    if (processedCount > 0) {
+        console.log(`📊 Processed ${processedCount} bets from real-time queue`);
     }
 }
 
@@ -448,20 +580,17 @@ async function startScraper(onBetFound) {
         
         console.log('✅ Connected to shuffle.com');
         console.log('👀 Monitoring High Roller bets...');
-        console.log(`📊 Adaptive interval: ${MIN_INTERVAL/1000}s-${MAX_INTERVAL/1000}s based on activity`);
+        console.log(`🔴 REAL-TIME CAPTURE MODE - MutationObserver watching table`);
+        console.log(`📊 Batched reporting every ${REPORT_INTERVAL/1000}s`);
         
-        // Adaptive scanning loop
-        const scheduledScan = async () => {
+        // Set up MutationObserver for real-time bet capture
+        await setupRealtimeCapture();
+        
+        // Process queued bets every 3 seconds
+        setInterval(async () => {
             if (!isRunning) return;
-            
-            const nextInterval = await scanAndCompare(onBetFound);
-            
-            // Schedule next scan with adaptive interval
-            currentScanTimeout = setTimeout(scheduledScan, nextInterval);
-        };
-        
-        // Start the adaptive scanning loop
-        await scheduledScan();
+            await processQueuedBets(onBetFound);
+        }, REPORT_INTERVAL);
 
     } catch (error) {
         console.error('❌ Scraper error:', error.message);
@@ -472,10 +601,7 @@ async function startScraper(onBetFound) {
 
 async function stopScraper() {
     isRunning = false;
-    if (currentScanTimeout) {
-        clearTimeout(currentScanTimeout);
-        currentScanTimeout = null;
-    }
+    betQueue = [];
     if (browser) {
         await browser.close();
         browser = null;
