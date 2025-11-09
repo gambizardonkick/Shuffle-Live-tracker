@@ -92,10 +92,9 @@ function convertToUSD(amount, currency) {
     return amount * price;
 }
 
-function createStableBetId(username, amount, game, multiplier, payout) {
-    // Create a stable ID based on bet data, not scrape time
-    // This prevents duplicates when same bet appears in multiple scrapes
-    return `${username}_${amount}_${game}_${multiplier}_${payout}`;
+function createStableBetId(username, amount, game, multiplier, payout, timestamp) {
+    // Create a unique ID including timestamp to allow multiple identical bets
+    return `${username}_${amount}_${game}_${multiplier}_${payout}_${timestamp}`;
 }
 
 async function scrapeBets() {
