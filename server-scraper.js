@@ -1,8 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-// Use network interception scraper for 100% bet capture rate
-const { startScraper, stopScraper, getCryptoPrices } = require('./scraper-network');
+const { startScraper, stopScraper, getCryptoPrices } = require('./scraper');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
