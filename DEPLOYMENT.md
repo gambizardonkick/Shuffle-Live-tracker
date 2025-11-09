@@ -68,6 +68,8 @@ Fill in the following settings:
 - **Build Command**: `npm install`
 - **Start Command**: `npm start`
 
+> **Note**: Chrome auto-installs during `npm install` via the postinstall script
+
 **Instance Type:**
 - **Free** (or choose paid plan for better performance)
 
@@ -81,7 +83,10 @@ Click "Advanced" → "Add Environment Variable" and add:
    - Value: `GZ-HUA-12D-19` (or change to your preferred password)
 
 3. **PORT**
-   - Value: `5000`
+   - Value: `10000`
+   
+4. **PUPPETEER_CACHE_DIR** (Optional but recommended)
+   - Value: `/opt/render/project/.cache/puppeteer`
 
 ### Step 5: Deploy
 1. Click "Create Web Service"
