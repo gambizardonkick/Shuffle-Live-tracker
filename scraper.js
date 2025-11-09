@@ -2,13 +2,15 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const SHUFFLE_URL = 'https://shuffle.com';
-const SCAN_INTERVAL = 5000; // Scan every 5 seconds and compare snapshots - optimal for system stability
+const MIN_INTERVAL = 2000;  // 2 seconds minimum (high activity)
+const MAX_INTERVAL = 20000; // 20 seconds maximum (low activity)
 
 let browser = null;
 let page = null;
 let isRunning = false;
 let processedBets = new Set();
 let previousSnapshot = new Set(); // Store previous scan's bet IDs
+let currentScanTimeout = null;
 
 const cryptoPrices = {
     BTC: 0,
@@ -242,6 +244,17 @@ async function scrapeBets() {
     return currentBets;
 }
 
+function calculateNextInterval(newBetsCount) {
+    // Adaptive interval based on activity level (2-20 seconds)
+    if (newBetsCount >= 40) return 2000;   // 2s - Very high activity (nearly full table refresh)
+    if (newBetsCount >= 25) return 3000;   // 3s - High activity
+    if (newBetsCount >= 15) return 5000;   // 5s - Medium activity
+    if (newBetsCount >= 8)  return 8000;   // 8s - Moderate activity
+    if (newBetsCount >= 4)  return 12000;  // 12s - Low activity
+    if (newBetsCount >= 1)  return 15000;  // 15s - Very low activity
+    return 20000;                           // 20s - Idle (no new bets)
+}
+
 async function scanAndCompare(onBetFound) {
     try {
         // Scan page and get all current bets
@@ -272,12 +285,20 @@ async function scanAndCompare(onBetFound) {
         // Update snapshot for next comparison
         previousSnapshot = currentSnapshot;
         
+        // Calculate next interval based on activity
+        const nextInterval = calculateNextInterval(newBets.length);
+        
         if (newBets.length > 0) {
-            console.log(`📊 Snapshot comparison: ${newBets.length} new bets found (Total visible: ${currentBets.length})`);
+            console.log(`📊 ${newBets.length} new bets found (Total: ${currentBets.length}) → Next scan in ${nextInterval/1000}s`);
+        } else {
+            console.log(`📊 No new bets → Next scan in ${nextInterval/1000}s`);
         }
+        
+        return nextInterval;
         
     } catch (error) {
         console.error('Error in scan and compare:', error.message);
+        return 5000; // Default to 5s on error
     }
 }
 
@@ -427,15 +448,20 @@ async function startScraper(onBetFound) {
         
         console.log('✅ Connected to shuffle.com');
         console.log('👀 Monitoring High Roller bets...');
-        console.log(`📊 Snapshot comparison method: Scan every ${SCAN_INTERVAL/1000}s and report only NEW bets`);
+        console.log(`📊 Adaptive interval: ${MIN_INTERVAL/1000}s-${MAX_INTERVAL/1000}s based on activity`);
         
-        // Initial scan to populate first snapshot
-        await scanAndCompare(onBetFound);
-
-        // Scan every 5 seconds and compare
-        setInterval(async () => {
-            await scanAndCompare(onBetFound);
-        }, SCAN_INTERVAL);
+        // Adaptive scanning loop
+        const scheduledScan = async () => {
+            if (!isRunning) return;
+            
+            const nextInterval = await scanAndCompare(onBetFound);
+            
+            // Schedule next scan with adaptive interval
+            currentScanTimeout = setTimeout(scheduledScan, nextInterval);
+        };
+        
+        // Start the adaptive scanning loop
+        await scheduledScan();
 
     } catch (error) {
         console.error('❌ Scraper error:', error.message);
@@ -446,6 +472,10 @@ async function startScraper(onBetFound) {
 
 async function stopScraper() {
     isRunning = false;
+    if (currentScanTimeout) {
+        clearTimeout(currentScanTimeout);
+        currentScanTimeout = null;
+    }
     if (browser) {
         await browser.close();
         browser = null;
