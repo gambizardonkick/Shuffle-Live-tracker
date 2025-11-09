@@ -448,7 +448,7 @@ async function startScraper(onBetFound) {
 
         const launchOptions = {
             headless: true,
-            executablePath: '/usr/bin/chromium-browser',
+            executablePath: '/usr/bin/chromium',
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
