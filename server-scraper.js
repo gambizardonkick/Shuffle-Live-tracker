@@ -134,8 +134,9 @@ function updateUserStats(bet) {
 async function sendToDiscord(bet, webhookUrl) {
     if (!webhookUrl) return;
     
-    const color = bet.isWin ? 0x00ff00 : 0xff0000;
     const username = bet.username;
+    const isWin = bet.isWin;
+    const profitLoss = bet.payoutUSD - bet.betAmountUSD;
     
     // Get user stats
     const now = new Date();
@@ -156,45 +157,85 @@ async function sendToDiscord(bet, webhookUrl) {
     const weeklyStats = stats.weekly[weekKey] || initPeriodStats();
     const monthlyStats = stats.monthly[monthKey] || initPeriodStats();
     
+    // Format numbers with + or - sign for profit/loss
+    const formatProfit = (val) => {
+        const sign = val >= 0 ? '+' : '';
+        return `${sign}$${val.toFixed(2)}`;
+    };
+    
     const embed = {
-        title: `🎲 ${bet.isWin ? '✅ WIN' : '❌ LOSS'} - ${username}`,
-        color: color,
+        author: {
+            name: `${username} • Bet Notification`,
+            icon_url: 'https://cdn.discordapp.com/emojis/741395740474736742.png'
+        },
+        title: `${isWin ? '🎉 WIN' : '💸 LOSS'} • ${bet.game}`,
+        description: `${isWin ? '**Congratulations!**' : '**Better luck next time**'}\n${bet.multiplierText} multiplier`,
+        color: isWin ? 0x22c55e : 0xef4444,
         fields: [
             {
-                name: '💰 This Bet',
-                value: `**Game:** ${bet.game || 'Unknown'}\n**Bet:** ${bet.betAmountText} ${bet.currency} ($${bet.betAmountUSD.toFixed(2)})\n**Multiplier:** ${bet.multiplierText}\n**Payout:** ${bet.payoutText} ${bet.currency} ($${bet.payoutUSD.toFixed(2)})`,
+                name: '💵 Bet Details',
+                value: [
+                    `\`\`\``,
+                    `Bet:        ${bet.betAmountText} ${bet.currency}`,
+                    `USD Value:  $${bet.betAmountUSD.toFixed(2)}`,
+                    `Multiplier: ${bet.multiplierText}`,
+                    `Payout:     ${bet.payoutText} ${bet.currency}`,
+                    `USD Value:  $${bet.payoutUSD.toFixed(2)}`,
+                    `───────────────────────────`,
+                    `Profit:     ${formatProfit(profitLoss)}`,
+                    `\`\`\``
+                ].join('\n'),
                 inline: false
             },
             {
-                name: '📊 Today',
-                value: `**Bets:** ${dailyStats.totalBets}\n**Win Rate:** ${dailyStats.winRate.toFixed(1)}%\n**Profit:** $${dailyStats.totalProfitUSD.toFixed(2)}`,
+                name: '📊 Daily Performance',
+                value: [
+                    `**Bets:** ${dailyStats.totalBets}`,
+                    `**Win Rate:** ${dailyStats.winRate.toFixed(1)}%`,
+                    `**Profit:** ${formatProfit(dailyStats.totalProfitUSD)}`
+                ].join('\n'),
                 inline: true
             },
             {
-                name: '📅 This Week',
-                value: `**Bets:** ${weeklyStats.totalBets}\n**Win Rate:** ${weeklyStats.winRate.toFixed(1)}%\n**Profit:** $${weeklyStats.totalProfitUSD.toFixed(2)}`,
+                name: '📅 Weekly Performance',
+                value: [
+                    `**Bets:** ${weeklyStats.totalBets}`,
+                    `**Win Rate:** ${weeklyStats.winRate.toFixed(1)}%`,
+                    `**Profit:** ${formatProfit(weeklyStats.totalProfitUSD)}`
+                ].join('\n'),
                 inline: true
             },
             {
-                name: '📆 This Month',
-                value: `**Bets:** ${monthlyStats.totalBets}\n**Win Rate:** ${monthlyStats.winRate.toFixed(1)}%\n**Profit:** $${monthlyStats.totalProfitUSD.toFixed(2)}`,
+                name: '📆 Monthly Performance',
+                value: [
+                    `**Bets:** ${monthlyStats.totalBets}`,
+                    `**Win Rate:** ${monthlyStats.winRate.toFixed(1)}%`,
+                    `**Profit:** ${formatProfit(monthlyStats.totalProfitUSD)}`
+                ].join('\n'),
                 inline: true
             },
             {
-                name: '🏆 Lifetime Stats',
-                value: `**Total Bets:** ${stats.totalBets}\n**Total Wagered:** $${stats.totalWageredUSD.toFixed(2)}\n**Total Profit:** $${stats.totalProfitUSD.toFixed(2)}`,
+                name: '🏆 Lifetime Statistics',
+                value: [
+                    `\`\`\``,
+                    `Total Bets:    ${stats.totalBets.toLocaleString()}`,
+                    `Total Wagered: $${stats.totalWageredUSD.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`,
+                    `Total Profit:  ${formatProfit(stats.totalProfitUSD)}`,
+                    `\`\`\``
+                ].join('\n'),
                 inline: false
             }
         ],
         timestamp: new Date(bet.timestamp).toISOString(),
         footer: {
-            text: `Tracked since server start`
+            text: `Shuffle.com Bet Tracker • ${new Date(bet.timestamp).toLocaleString('en-US', { timeZone: 'UTC', hour12: true })}`,
+            icon_url: 'https://cdn.discordapp.com/emojis/741395740474736742.png'
         }
     };
     
     try {
         await axios.post(webhookUrl, { embeds: [embed] });
-        console.log(`✅ Sent ${username} bet to Discord with stats`);
+        console.log(`✅ Sent ${username} bet to Discord with comprehensive stats`);
     } catch (error) {
         console.error(`Error sending ${username} to Discord:`, error.message);
     }
@@ -355,34 +396,221 @@ app.get('/', (req, res) => {
             <title>Shuffle.com Live Bet Tracker</title>
             <style>
                 * { box-sizing: border-box; margin: 0; padding: 0; }
-                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0e27; color: #fff; padding: 20px; }
-                .container { max-width: 1600px; margin: 0 auto; }
-                h1 { color: #00ff88; margin-bottom: 10px; }
-                .status { color: #888; margin-bottom: 20px; }
-                .prices { background: #1a1f3a; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-                .prices h3 { color: #00ff88; margin-bottom: 10px; }
-                .price-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-                .price-item { background: #0a0e27; padding: 10px; border-radius: 4px; text-align: center; }
-                .price-item .currency { font-weight: bold; color: #00ff88; }
-                .price-item .value { font-size: 12px; color: #aaa; }
-                .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-                .tab { background: #1a1f3a; color: #00ff88; border: 2px solid #00ff88; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.3s; }
-                .tab.active, .tab:hover { background: #00ff88; color: #0a0e27; }
-                table { width: 100%; border-collapse: collapse; background: #1a1f3a; border-radius: 8px; overflow: hidden; }
-                th { background: #00ff88; color: #0a0e27; padding: 12px; text-align: left; font-weight: bold; position: sticky; top: 0; }
-                td { padding: 10px; border-bottom: 1px solid #2a2f4a; }
-                tr:hover { background: #2a2f4a; }
-                .win { color: #00ff88; }
-                .loss { color: #ff4444; }
-                .highlight { background: #2d3748; }
-                button { background: #00ff88; color: #0a0e27; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-right: 10px; }
-                button:hover { background: #00dd77; }
-                .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }
-                .stat-card { background: #1a1f3a; padding: 20px; border-radius: 8px; border-left: 4px solid #00ff88; }
-                .stat-card h3 { color: #00ff88; font-size: 14px; margin-bottom: 10px; }
-                .stat-card .value { font-size: 24px; font-weight: bold; }
-                .stat-card .label { font-size: 12px; color: #888; margin-top: 5px; }
-                input { background: #1a1f3a; color: #fff; border: 1px solid #00ff88; padding: 10px; border-radius: 4px; margin-bottom: 15px; width: 300px; }
+                body { 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                    background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+                    color: #e8eaed;
+                    padding: 20px;
+                    min-height: 100vh;
+                }
+                .container { max-width: 1800px; margin: 0 auto; }
+                h1 { 
+                    color: #00ff88;
+                    margin-bottom: 8px;
+                    font-size: 32px;
+                    font-weight: 700;
+                    text-shadow: 0 2px 10px rgba(0, 255, 136, 0.3);
+                }
+                h2 { 
+                    color: #00ff88;
+                    margin-bottom: 20px;
+                    font-size: 24px;
+                    font-weight: 600;
+                }
+                .status { 
+                    color: #9aa0a6;
+                    margin-bottom: 24px;
+                    font-size: 14px;
+                }
+                .prices { 
+                    background: rgba(26, 31, 58, 0.6);
+                    backdrop-filter: blur(10px);
+                    padding: 20px;
+                    border-radius: 12px;
+                    margin-bottom: 24px;
+                    border: 1px solid rgba(0, 255, 136, 0.1);
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                }
+                .prices h3 { 
+                    color: #00ff88;
+                    margin-bottom: 15px;
+                    font-size: 16px;
+                    font-weight: 600;
+                }
+                .price-grid { 
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+                    gap: 12px;
+                }
+                .price-item { 
+                    background: rgba(10, 14, 39, 0.8);
+                    padding: 12px;
+                    border-radius: 8px;
+                    text-align: center;
+                    border: 1px solid rgba(0, 255, 136, 0.15);
+                    transition: all 0.2s;
+                }
+                .price-item:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 12px rgba(0, 255, 136, 0.15);
+                }
+                .price-item .currency { 
+                    font-weight: 600;
+                    color: #00ff88;
+                    font-size: 13px;
+                }
+                .price-item .value { 
+                    font-size: 12px;
+                    color: #9aa0a6;
+                    margin-top: 4px;
+                }
+                .tabs { 
+                    display: flex;
+                    gap: 8px;
+                    margin-bottom: 24px;
+                    flex-wrap: wrap;
+                }
+                .tab { 
+                    background: rgba(26, 31, 58, 0.6);
+                    color: #00ff88;
+                    border: 1px solid rgba(0, 255, 136, 0.3);
+                    padding: 10px 20px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-weight: 500;
+                    font-size: 14px;
+                    transition: all 0.2s;
+                }
+                .tab:hover { 
+                    background: rgba(0, 255, 136, 0.1);
+                    border-color: #00ff88;
+                    transform: translateY(-1px);
+                }
+                .tab.active { 
+                    background: #00ff88;
+                    color: #0a0e27;
+                    border-color: #00ff88;
+                    box-shadow: 0 4px 12px rgba(0, 255, 136, 0.3);
+                }
+                #dynamicTabs { display: flex; gap: 8px; flex-wrap: wrap; }
+                table { 
+                    width: 100%;
+                    border-collapse: collapse;
+                    background: rgba(26, 31, 58, 0.6);
+                    border-radius: 12px;
+                    overflow: hidden;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                    border: 1px solid rgba(0, 255, 136, 0.1);
+                }
+                th { 
+                    background: linear-gradient(135deg, #00ff88 0%, #00dd77 100%);
+                    color: #0a0e27;
+                    padding: 14px 12px;
+                    text-align: left;
+                    font-weight: 600;
+                    font-size: 13px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    position: sticky;
+                    top: 0;
+                }
+                td { 
+                    padding: 12px;
+                    border-bottom: 1px solid rgba(42, 47, 74, 0.5);
+                    font-size: 14px;
+                }
+                tr:hover { 
+                    background: rgba(42, 47, 74, 0.4);
+                }
+                tr:last-child td {
+                    border-bottom: none;
+                }
+                .win { 
+                    color: #00ff88;
+                    font-weight: 600;
+                }
+                .loss { 
+                    color: #ff6b6b;
+                    font-weight: 600;
+                }
+                button { 
+                    background: linear-gradient(135deg, #00ff88 0%, #00dd77 100%);
+                    color: #0a0e27;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-weight: 600;
+                    font-size: 14px;
+                    transition: all 0.2s;
+                    box-shadow: 0 2px 8px rgba(0, 255, 136, 0.2);
+                }
+                button:hover { 
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 12px rgba(0, 255, 136, 0.4);
+                }
+                button:active {
+                    transform: translateY(0);
+                }
+                .stats-grid { 
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                    gap: 16px;
+                    margin-bottom: 24px;
+                }
+                .stat-card { 
+                    background: rgba(26, 31, 58, 0.6);
+                    backdrop-filter: blur(10px);
+                    padding: 24px;
+                    border-radius: 12px;
+                    border-left: 4px solid #00ff88;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                    transition: all 0.2s;
+                }
+                .stat-card:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+                }
+                .stat-card h3 { 
+                    color: #00ff88;
+                    font-size: 13px;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 12px;
+                }
+                .stat-card .value { 
+                    font-size: 28px;
+                    font-weight: 700;
+                    color: #fff;
+                    margin-bottom: 4px;
+                }
+                .stat-card .label { 
+                    font-size: 13px;
+                    color: #9aa0a6;
+                    margin-top: 6px;
+                    line-height: 1.5;
+                }
+                input { 
+                    background: rgba(26, 31, 58, 0.6);
+                    color: #fff;
+                    border: 1px solid rgba(0, 255, 136, 0.3);
+                    padding: 12px 16px;
+                    border-radius: 8px;
+                    margin-bottom: 12px;
+                    width: 100%;
+                    max-width: 500px;
+                    font-size: 14px;
+                    transition: all 0.2s;
+                }
+                input:focus {
+                    outline: none;
+                    border-color: #00ff88;
+                    box-shadow: 0 0 0 3px rgba(0, 255, 136, 0.1);
+                }
+                input::placeholder {
+                    color: #5f6368;
+                }
             </style>
         </head>
         <body>
@@ -523,10 +751,10 @@ app.get('/', (req, res) => {
                     }
                 }
                 
-                function switchTab(tab) {
+                async function switchTab(tab) {
                     currentTab = tab;
                     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                    event.target.classList.add('active');
+                    if (event && event.target) event.target.classList.add('active');
                     
                     // Hide all tabs
                     document.getElementById('recentTab').style.display = 'none';
@@ -536,10 +764,16 @@ app.get('/', (req, res) => {
                     document.querySelectorAll('.tracked-user-tab').forEach(t => t.style.display = 'none');
                     
                     // Show selected tab
-                    if (tab === 'recent') document.getElementById('recentTab').style.display = 'block';
-                    else if (tab === 'users') document.getElementById('usersTab').style.display = 'block';
-                    else if (tab === 'thegoobr') document.getElementById('thegoobrTab').style.display = 'block';
-                    else if (tab === 'admin') {
+                    if (tab === 'recent') {
+                        document.getElementById('recentTab').style.display = 'block';
+                        await loadBets();
+                    } else if (tab === 'users') {
+                        document.getElementById('usersTab').style.display = 'block';
+                        await loadUsers();
+                    } else if (tab === 'thegoobr') {
+                        document.getElementById('thegoobrTab').style.display = 'block';
+                        await loadTheGoobr();
+                    } else if (tab === 'admin') {
                         document.getElementById('adminTab').style.display = 'block';
                         if (!isAdminAuthenticated) {
                             document.getElementById('adminLogin').style.display = 'block';
@@ -548,13 +782,14 @@ app.get('/', (req, res) => {
                             document.getElementById('adminLogin').style.display = 'none';
                             document.getElementById('adminPanel').style.display = 'block';
                         }
-                    }
-                    else {
+                    } else {
+                        // Tracked user tab
                         const userTab = document.getElementById(\`user-\${tab}\`);
-                        if (userTab) userTab.style.display = 'block';
+                        if (userTab) {
+                            userTab.style.display = 'block';
+                            await loadTrackedUserData(tab);
+                        }
                     }
-                    
-                    loadData();
                 }
                 
                 async function loadPrices() {
@@ -690,14 +925,14 @@ app.get('/', (req, res) => {
                     
                     // Update dynamic tabs
                     const dynamicTabsHtml = trackedUsers.map(user => \`
-                        <div class="tab" onclick="switchTab('\${user.username}')">\${user.username}</div>
+                        <div class="tab\${currentTab === user.username ? ' active' : ''}" onclick="switchTab('\${user.username}')">\${user.username}</div>
                     \`).join('');
                     document.getElementById('dynamicTabs').innerHTML = dynamicTabsHtml;
                     
                     // Create tab content for each tracked user
                     const tabsContainer = document.getElementById('trackedUserTabs');
                     const tabsHtml = trackedUsers.map(user => \`
-                        <div id="user-\${user.username}" class="tracked-user-tab" style="display:none;">
+                        <div id="user-\${user.username}" class="tracked-user-tab" style="display:\${currentTab === user.username ? 'block' : 'none'};">
                             <h2>📊 \${user.username} - Lifetime Stats</h2>
                             <div class="stat-card" style="margin-bottom: 20px;">
                                 <h3>Tracking Information</h3>
