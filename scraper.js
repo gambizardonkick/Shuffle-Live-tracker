@@ -458,10 +458,11 @@ async function startScraper(onBetFound) {
             ]
         };
         
-        // Use Replit's Chromium if available, otherwise let Puppeteer find Chrome
+        // Use Replit's Chromium if running on Replit
         if (process.env.REPL_ID) {
             launchOptions.executablePath = '/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium';
         }
+        // On Render/production, Puppeteer will auto-find downloaded Chrome
         
         browser = await puppeteer.launch(launchOptions);
 
